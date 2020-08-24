@@ -54,6 +54,8 @@ void pack(Progress* pr, const char* game_path, const char* dest_path) {
 	pr->progress = 1.0;
 }
 
+// All the writing for each sector is packed into this single function instead of having each sector to be in its separate function
+// biggest reason is because all sectors need a very strict ordering
 void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
@@ -182,11 +184,82 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 	// Write twice the same descriptors for Main and RSRV
 	for (int i = 0; i < 2; ++i) {
+		ushort cur_tag_ident = 1;
+		ushort cur_tag_desc_ver = 2;
 		// Write primary volume descriptor UDF
+		PrimaryVolumeDescriptor_UDF pvd;
+		DescriptorTag& tag = pvd.tag; // Reference to currently written to descriptor tag
 #pragma region PrimaryVolumeDescriptor_UDF writing
-
+		tag.tag_ident = cur_tag_ident;
+		tag.desc_version = cur_tag_desc_ver;
+		// Tag checksum and its desc crc fields are written after descriptor has been filled
+		tag.desc_crc_len = 2032;
+		tag.tag_location = sm.get_current_sector();
+		pvd.vol_desc_seq_num = 0;
+		pvd.prim_vol_desc_num = 0;
+		char unkNum = 0x8; // This is put as the first char in vol_ident of every PS2 game, no clue why
+		strncpy(pvd.vol_ident, &unkNum, 1);
+		strncpy(pvd.vol_ident + 1, vol_ident, strlen(vol_ident));
+		pad_string(pvd.vol_ident, strlen(vol_ident) + 1, 32, '\0');
+		char strLen = strlen(vol_ident) + 1; // Size of the identifier is also written at the end, no clue why nothing is mentioned about this in UDF standard
+		strncpy(pvd.vol_ident + 31, &strLen, 1);
+		pvd.vol_seq_num = 1;
+		pvd.max_vol_seq_num = 1;
+		pvd.interchange_level = 2;
+		pvd.max_inter_level = 2;
+		pvd.character_set_list = 1;
+		pvd.max_char_set_list = 1;
+		strncpy(pvd.vol_set_ident, &unkNum, 1);
+		auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
+		strncpy(pvd.vol_set_ident + 1, encoded_date, strlen(encoded_date));
+		pad_string(pvd.vol_set_ident, strlen(encoded_date) + 1, 128 - 36);
+		pad_string(pvd.vol_set_ident, strlen(encoded_date) + 1 + 36, 128, '\0');
+		char size = 0x31;
+		strncpy(pvd.vol_set_ident + 127, &size, 1);
+		pvd.desc_char_set.char_set_type = 0;
+		auto osta = "OSTA Compressed Unicode";
+		strncpy(pvd.desc_char_set.char_set_info, osta, strlen(osta));
+		pad_string(pvd.desc_char_set.char_set_info, strlen(osta), 63, '\0');
+		pvd.expl_char_set.char_set_type = 0;
+		strncpy(pvd.expl_char_set.char_set_info, osta, strlen(osta));
+		pad_string(pvd.expl_char_set.char_set_info, strlen(osta), 63, '\0');
+		pvd.volume_abstract.length = 0;
+		pvd.volume_abstract.location = 0;
+		pvd.volume_copy_notice.length = 0;
+		pvd.volume_copy_notice.location = 0;
+		pvd.app_ident.flags = 0;
+		strncpy(pvd.app_ident.ident, sys_ident, strlen(sys_ident));
+		pad_string(pvd.app_ident.ident, strlen(sys_ident), 23);
+		pad_string(pvd.app_ident.ident_suffix, 0, 8, '\0');
+		// Just record date and time whenever Twinsanity PAL was released
+		pvd.rec_date_and_time.microseconds = 0;
+		pvd.rec_date_and_time.milliseconds = 0;
+		pvd.rec_date_and_time.centiseconds = 0;
+		pvd.rec_date_and_time.second = 47;
+		pvd.rec_date_and_time.minute = 33;
+		pvd.rec_date_and_time.hour = 7;
+		pvd.rec_date_and_time.day = 3;
+		pvd.rec_date_and_time.month = 9;
+		pvd.rec_date_and_time.year = 2004;
+		pvd.rec_date_and_time.type_and_timezone = 0x121C;
+		pvd.impl_ident.flags = 0;
+		auto dvd_gen = "DVD-ROM GENERATOR";
+		strncpy(pvd.impl_ident.ident, dvd_gen, strlen(dvd_gen));
+		pad_string(pvd.impl_ident.ident, strlen(dvd_gen), 23, '\0');
+		pad_string(pvd.impl_ident.ident_suffix, 0, 8, '\0');
+		pad_string((char*)pvd.impl_use, 0, 64, '\0');
+		pvd.pred_vol_desc_seq_loc = 0;
+		pad_string((char*)pvd.reserved, 0, 22, '\0');
+		auto pvd_checksum = cksum((unsigned char*)&pvd, sizeof(PrimaryVolumeDescriptor_UDF));
+		tag.desc_crc = pvd_checksum;
+		tag.tag_checksum = 0;
+		auto tag_cksum = cksum((unsigned char*)&tag, sizeof(DescriptorTag));
+		tag.tag_checksum = tag_cksum;
+		sm.write_sector<PrimaryVolumeDescriptor_UDF>(f, &pvd, sizeof(PrimaryVolumeDescriptor_UDF));
 #pragma endregion
+		cur_tag_ident = 4;
 
+		f.close();
 
 		// Write implementation use volume descriptor
 

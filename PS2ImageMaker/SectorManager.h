@@ -14,6 +14,7 @@ public:
 	void write_file(std::ofstream& f, std::filebuf* buf, long file_size);
 	void pad_sector(std::ofstream& f, int padding_size);
 	unsigned int get_total_sectors();
+	long get_current_sector();
 
 private:
 	long current_sector;

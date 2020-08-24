@@ -101,7 +101,7 @@ struct DescriptorTag {
 	ushort desc_version;
 	byte tag_checksum;
 	byte reserved = '\0';
-	ushort tag_serial;
+	ushort tag_serial = 0; // Crash Twinsanity has this 0 for all its sectors so I assume all PS2 discs do as well :^)
 	ushort desc_crc;
 	ushort desc_crc_len; // = sizeof(Descriptor) - sizeof(DescriptorTag)
 	uint tag_location;

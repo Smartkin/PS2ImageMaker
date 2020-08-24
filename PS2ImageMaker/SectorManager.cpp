@@ -45,3 +45,8 @@ unsigned int SectorManager::get_total_sectors()
 {
 	return total_sectors;
 }
+
+long SectorManager::get_current_sector()
+{
+	return current_sector;
+}
