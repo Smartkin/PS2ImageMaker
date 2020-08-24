@@ -160,12 +160,21 @@ struct PrimaryVolumeDescriptor_UDF {
 	byte reserved[22];
 };
 
+struct LVInformation {
+	Charspec lvi_charset;
+	char log_vol_ident[128];
+	char lvinfo1[36];
+	char lvinfo2[36];
+	char lvinfo3[36];
+	EntityID impl_id;
+	byte impl_use[128];
+};
 
 struct ImplUseVolumeDescriptor {
 	DescriptorTag tag;
 	uint vol_desc_seq_num;
 	EntityID impl_ident;
-	byte impl_use[460];
+	LVInformation impl_use;
 };
 
 struct PartitionDescriptor {

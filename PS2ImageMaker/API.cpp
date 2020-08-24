@@ -59,6 +59,12 @@ void pack(Progress* pr, const char* game_path, const char* dest_path) {
 void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
+	auto sys_ident = "PLAYSTATION";
+	auto vol_ident = "CRASH";
+	auto publisher_ident = "VUG";
+	auto data_prep = "P.GENDREAU";
+	auto app_ident = "PLAYSTATION";
+	auto cop_ident = "VUG";
 	// Fill first 16 sectors with nothing as they are system stuff
 	for (int i = 0; i < 16; ++i) {
 		auto pad = '\0';
@@ -67,10 +73,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	// Write primary descriptor ISO
 #pragma region PrimaryVolumeDescriptor_ISO writing
 	PrimaryVolumeDescriptor_ISO pvd;
-	auto sys_ident = "PLAYSTATION";
+	
 	strncpy(pvd.sys_ident, sys_ident, strlen(sys_ident));
 	pad_string(pvd.sys_ident, strlen(sys_ident), 32);
-	auto vol_ident = "CRASH";
+	
 	strncpy(pvd.vol_ident, vol_ident, strlen(vol_ident));
 	pad_string(pvd.vol_ident, strlen(vol_ident), 32);
 	// Write unused field
@@ -123,16 +129,16 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	root_rec.file_ident_len = 1;
 	root_rec.file_ident = '\0';
 	pad_string(pvd.volume_set_desc, 0, 128);
-	auto publisher_ident = "VUG";
+	
 	strncpy(pvd.publisher_ident, publisher_ident, strlen(publisher_ident));
 	pad_string(pvd.publisher_ident, strlen(publisher_ident), 128);
-	auto data_prep = "P.GENDREAU";
+	
 	strncpy(pvd.data_preparer_ident, data_prep, strlen(data_prep));
 	pad_string(pvd.data_preparer_ident, strlen(data_prep), 128);
-	auto app_ident = "PLAYSTATION";
+	
 	strncpy(pvd.app_ident, app_ident, strlen(app_ident));
 	pad_string(pvd.app_ident, strlen(app_ident), 128);
-	auto cop_ident = "VUG";
+	
 	strncpy(pvd.cop_ident, cop_ident, strlen(cop_ident));
 	pad_string(pvd.cop_ident, strlen(cop_ident), 38);
 	pad_string(pvd.abstract_ident, 0, 36);
@@ -184,8 +190,13 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 	// Write twice the same descriptors for Main and RSRV
 	for (int i = 0; i < 2; ++i) {
+		// Predetermined strings by UDF and PS2 standard
+		auto osta = "OSTA Compressed Unicode";
+		auto dvd_gen = "DVD-ROM GENERATOR";
+		auto udf_lv_info = "*UDF LV Info";
 		ushort cur_tag_ident = 1;
 		ushort cur_tag_desc_ver = 2;
+		uint cur_vol_desc_seq_num = 0;
 		// Write primary volume descriptor UDF
 		PrimaryVolumeDescriptor_UDF pvd;
 		DescriptorTag& tag = pvd.tag; // Reference to currently written to descriptor tag
@@ -195,7 +206,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
 		tag.desc_crc_len = 2032;
 		tag.tag_location = sm.get_current_sector();
-		pvd.vol_desc_seq_num = 0;
+		pvd.vol_desc_seq_num = cur_vol_desc_seq_num++;
 		pvd.prim_vol_desc_num = 0;
 		char unkNum = 0x8; // This is put as the first char in vol_ident of every PS2 game, no clue why
 		strncpy(pvd.vol_ident, &unkNum, 1);
@@ -217,7 +228,6 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		char size = 0x31;
 		strncpy(pvd.vol_set_ident + 127, &size, 1);
 		pvd.desc_char_set.char_set_type = 0;
-		auto osta = "OSTA Compressed Unicode";
 		strncpy(pvd.desc_char_set.char_set_info, osta, strlen(osta));
 		pad_string(pvd.desc_char_set.char_set_info, strlen(osta), 63, '\0');
 		pvd.expl_char_set.char_set_type = 0;
@@ -243,7 +253,6 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pvd.rec_date_and_time.year = 2004;
 		pvd.rec_date_and_time.type_and_timezone = 0x121C;
 		pvd.impl_ident.flags = 0;
-		auto dvd_gen = "DVD-ROM GENERATOR";
 		strncpy(pvd.impl_ident.ident, dvd_gen, strlen(dvd_gen));
 		pad_string(pvd.impl_ident.ident, strlen(dvd_gen), 23, '\0');
 		pad_string(pvd.impl_ident.ident_suffix, 0, 8, '\0');
@@ -257,11 +266,53 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		tag.tag_checksum = tag_cksum;
 		sm.write_sector<PrimaryVolumeDescriptor_UDF>(f, &pvd, sizeof(PrimaryVolumeDescriptor_UDF));
 #pragma endregion
-		cur_tag_ident = 4;
-
-		f.close();
+		cur_tag_ident = 4; // Other identifiers start couting from here
 
 		// Write implementation use volume descriptor
+#pragma region ImplUseVolumeDescriptor writing
+		ImplUseVolumeDescriptor iuv;
+		DescriptorTag& iuv_tag = iuv.tag;
+		iuv_tag.tag_ident = cur_tag_ident++;
+		iuv_tag.desc_crc_len = 2032;
+		iuv_tag.desc_version = 2;
+		iuv_tag.tag_location = sm.get_current_sector();
+		// Tag checksum and its desc crc fields are written after descriptor has been filled
+		iuv.vol_desc_seq_num = cur_vol_desc_seq_num++;
+		iuv.impl_ident.flags = 0;
+		strncpy(iuv.impl_ident.ident, udf_lv_info, strlen(udf_lv_info));
+		pad_string(iuv.impl_ident.ident, strlen(udf_lv_info), 23, '\0');
+		pad_string(iuv.impl_ident.ident_suffix, 0, 8, '\0');
+		iuv.impl_use.lvi_charset.char_set_type = 0;
+		strncpy(iuv.impl_use.lvi_charset.char_set_info, osta, strlen(osta));
+		pad_string(iuv.impl_use.lvi_charset.char_set_info, strlen(osta), 63, '\0');
+		strncpy(iuv.impl_use.log_vol_ident, &unkNum, 1);
+		strncpy(iuv.impl_use.log_vol_ident + 1, vol_ident, strlen(vol_ident));
+		pad_string(iuv.impl_use.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
+		// Honestly what's wrong with these standard designers?
+		char str_len = strlen(vol_ident) + 1;
+		strncpy(iuv.impl_use.log_vol_ident + 127, &str_len, 1);
+		strncpy(iuv.impl_use.lvinfo1, &unkNum, 1);
+		strncpy(iuv.impl_use.lvinfo2, &unkNum, 1);
+		strncpy(iuv.impl_use.lvinfo3, &unkNum, 1);
+		pad_string(iuv.impl_use.lvinfo1, 1, 36, '\0');
+		pad_string(iuv.impl_use.lvinfo2, 1, 36, '\0');
+		pad_string(iuv.impl_use.lvinfo3, 1, 36, '\0');
+		char c = 1;
+		strncpy(iuv.impl_use.lvinfo1, &c, 1);
+		strncpy(iuv.impl_use.lvinfo2, &c, 1);
+		strncpy(iuv.impl_use.lvinfo3, &c, 1);
+		iuv.impl_use.impl_id.flags = 0;
+		strncpy(iuv.impl_use.impl_id.ident, dvd_gen, strlen(dvd_gen));
+		pad_string(iuv.impl_use.impl_id.ident, strlen(dvd_gen), 23, '\0');
+		pad_string(iuv.impl_use.impl_id.ident_suffix, 0, 8, '\0');
+		pad_string((char*)iuv.impl_use.impl_use, 0, 128, '\0');
+		auto iuv_checksum = cksum((unsigned char*)&iuv, sizeof(ImplUseVolumeDescriptor));
+		iuv_tag.desc_crc = iuv_checksum;
+		iuv_tag.tag_checksum = 0;
+		tag_cksum = cksum((unsigned char*)&iuv_tag, sizeof(DescriptorTag));
+		iuv_tag.tag_checksum = tag_cksum;
+		sm.write_sector<ImplUseVolumeDescriptor>(f, &iuv, sizeof(ImplUseVolumeDescriptor));
+#pragma endregion
 
 		// Write partition descriptor
 
