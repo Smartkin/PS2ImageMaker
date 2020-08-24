@@ -205,7 +205,7 @@ struct LogicalVolumeDescriptor {
 	EntityID impl_ident;
 	byte impl_use[128];
 	Extent int_seq_extent;
-	byte part_maps;
+	byte part_maps[6];
 };
 
 struct UnallocatedSpaceDescriptor {
@@ -229,7 +229,7 @@ struct LogVolIntImplUse {
 	ushort min_udf_read_rev;
 	ushort min_udf_write_rev;
 	ushort max_udf_write_rev;
-	byte impl_use;
+	byte impl_use[2];
 };
 
 struct LogicalVolumeIntegrityDescriptor {
@@ -261,7 +261,7 @@ struct PathTableEntry {
 	byte ext_rec_attrib_len;
 	short loc_of_ext; // LBA
 	byte par_dir_num;
-	byte dir_ident; // Length depends on ident_len field, but not to mess with memory management algo is gonna write this in a different way
+	char dir_ident; // Length depends on ident_len field, but not to mess with memory management algo is gonna write this in a different way
 	byte pad = '\0'; // Onle written if ident_len is odd
 };
 

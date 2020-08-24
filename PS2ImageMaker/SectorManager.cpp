@@ -56,3 +56,13 @@ unsigned int SectorManager::get_partition_start_sector()
 {
 	return partition_start_sector;
 }
+
+long SectorManager::get_total_files()
+{
+	return files;
+}
+
+long SectorManager::get_total_directories()
+{
+	return directories;
+}

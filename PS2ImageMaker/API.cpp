@@ -9,12 +9,14 @@
 #include <thread>
 #include <fstream>
 #include <algorithm>
+#include <map>
 
 void pack(Progress* pr, const char* game_path, const char* dest_path);
 void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft);
 void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f, FileTree* ft);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
+void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
 
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
@@ -66,6 +68,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	auto data_prep = "P.GENDREAU";
 	auto app_ident = "PLAYSTATION";
 	auto cop_ident = "VUG";
+	// Size of the identifier is written at the end of some fields in UDF descriptors, no clue why nothing is mentioned about this in UDF standard
+	// must have been some Sony shenanigans
+	char vol_ident_len = strlen(vol_ident) + 1;
 	// Fill first 16 sectors with nothing as they are system stuff
 	for (int i = 0; i < 16; ++i) {
 		auto pad = '\0';
@@ -188,13 +193,13 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		auto pad = '\0';
 		sm.write_sector<char>(f, &pad, 1);
 	}
-
+	// Predetermined strings by UDF and PS2 standard
+	auto osta = "OSTA Compressed Unicode";
+	auto dvd_gen = "DVD-ROM GENERATOR";
+	auto udf_lv_info = "*UDF LV Info";
+	auto osta_complient = "*OSTA UDF Compliant";
 	// Write twice the same descriptors for Main and RSRV
 	for (int i = 0; i < 2; ++i) {
-		// Predetermined strings by UDF and PS2 standard
-		auto osta = "OSTA Compressed Unicode";
-		auto dvd_gen = "DVD-ROM GENERATOR";
-		auto udf_lv_info = "*UDF LV Info";
 		ushort cur_tag_ident = 1;
 		ushort cur_tag_desc_ver = 2;
 		uint cur_vol_desc_seq_num = 0;
@@ -213,8 +218,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		strncpy(pvd.vol_ident, &unkNum, 1);
 		strncpy(pvd.vol_ident + 1, vol_ident, strlen(vol_ident));
 		pad_string(pvd.vol_ident, strlen(vol_ident) + 1, 32, '\0');
-		char strLen = strlen(vol_ident) + 1; // Size of the identifier is also written at the end, no clue why nothing is mentioned about this in UDF standard
-		strncpy(pvd.vol_ident + 31, &strLen, 1);
+		strncpy(pvd.vol_ident + 31, &vol_ident_len, 1);
 		pvd.vol_seq_num = 1;
 		pvd.max_vol_seq_num = 1;
 		pvd.interchange_level = 2;
@@ -260,14 +264,14 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string((char*)pvd.impl_use, 0, 64, '\0');
 		pvd.pred_vol_desc_seq_loc = 0;
 		pad_string((char*)pvd.reserved, 0, 22, '\0');
-		auto pvd_checksum = cksum((unsigned char*)&pvd, sizeof(PrimaryVolumeDescriptor_UDF));
+		auto pvd_checksum = cksum(((unsigned char*)&pvd) + sizeof(DescriptorTag), sizeof(PrimaryVolumeDescriptor_UDF) - sizeof(DescriptorTag));
 		pvd_tag.desc_crc = pvd_checksum;
 		pvd_tag.tag_checksum = 0;
-		auto tag_cksum = cksum((unsigned char*)&pvd_tag, sizeof(DescriptorTag));
+		auto tag_cksum = cksum_tag((unsigned char*)&pvd_tag, sizeof(DescriptorTag));
 		pvd_tag.tag_checksum = tag_cksum;
 		sm.write_sector<PrimaryVolumeDescriptor_UDF>(f, &pvd, sizeof(PrimaryVolumeDescriptor_UDF));
 #pragma endregion
-		cur_tag_ident = 4; // Other identifiers start couting from here
+		cur_tag_ident = 4; // Other identifiers just start couting up from here
 
 		// Write implementation use volume descriptor
 #pragma region ImplUseVolumeDescriptor writing
@@ -290,8 +294,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		strncpy(iuv.impl_use.log_vol_ident + 1, vol_ident, strlen(vol_ident));
 		pad_string(iuv.impl_use.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
 		// Honestly what's wrong with these standard designers?
-		char str_len = strlen(vol_ident) + 1;
-		strncpy(iuv.impl_use.log_vol_ident + 127, &str_len, 1);
+		strncpy(iuv.impl_use.log_vol_ident + 127, &vol_ident_len, 1);
 		strncpy(iuv.impl_use.lvinfo1, &unkNum, 1);
 		strncpy(iuv.impl_use.lvinfo2, &unkNum, 1);
 		strncpy(iuv.impl_use.lvinfo3, &unkNum, 1);
@@ -307,10 +310,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string(iuv.impl_use.impl_id.ident, strlen(dvd_gen), 23, '\0');
 		pad_string(iuv.impl_use.impl_id.ident_suffix, 0, 8, '\0');
 		pad_string((char*)iuv.impl_use.impl_use, 0, 128, '\0');
-		auto iuv_checksum = cksum((unsigned char*)&iuv, sizeof(ImplUseVolumeDescriptor));
+		auto iuv_checksum = cksum(((unsigned char*)&iuv) + sizeof(DescriptorTag), sizeof(ImplUseVolumeDescriptor) - sizeof(DescriptorTag));
 		iuv_tag.desc_crc = iuv_checksum;
 		iuv_tag.tag_checksum = 0;
-		tag_cksum = cksum((unsigned char*)&iuv_tag, sizeof(DescriptorTag));
+		tag_cksum = cksum_tag((unsigned char*)&iuv_tag, sizeof(DescriptorTag));
 		iuv_tag.tag_checksum = tag_cksum;
 		sm.write_sector<ImplUseVolumeDescriptor>(f, &iuv, sizeof(ImplUseVolumeDescriptor));
 #pragma endregion
@@ -342,20 +345,96 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string(pd.impl_ident.ident_suffix, 0, 8, '\0');
 		pad_string((char*)pd.impl_use, 0, 128, '\0');
 		pad_string((char*)pd.reserved, 0, 156, '\0');
-		auto pd_checksum = cksum((unsigned char*)&pd, sizeof(PartitionDescriptor));
+		auto pd_checksum = cksum(((unsigned char*)&pd) + sizeof(DescriptorTag), sizeof(PartitionDescriptor) - sizeof(DescriptorTag));
 		pd_tag.desc_crc = pd_checksum;
 		pd_tag.tag_checksum = 0;
-		tag_cksum = cksum((unsigned char*)&pd_tag, sizeof(DescriptorTag));
+		tag_cksum = cksum_tag((unsigned char*)&pd_tag, sizeof(DescriptorTag));
 		pd_tag.tag_checksum = tag_cksum;
 		sm.write_sector<PartitionDescriptor>(f, &pd, sizeof(PartitionDescriptor));
 #pragma endregion
-		f.close();
 
 		// Write logical volume descriptor
+#pragma region LogicalVolumeDescriptor writing
+		LogicalVolumeDescriptor lv;
+		DescriptorTag& lv_tag = lv.tag;
+		lv_tag.tag_ident = cur_tag_ident++;
+		lv_tag.desc_version = cur_tag_desc_ver;
+		lv_tag.desc_crc_len = 2032;
+		lv_tag.tag_location = sm.get_current_sector();
+		// Tag checksum and its desc crc fields are written after descriptor has been filled
+		lv.vol_desc_seq_num = cur_vol_desc_seq_num++;
+		lv.desc_char_set.char_set_type = 0;
+		strncpy(lv.desc_char_set.char_set_info, osta, strlen(osta));
+		pad_string(lv.desc_char_set.char_set_info, strlen(osta), 63, '\0');
+		strncpy(lv.log_vol_ident, &unkNum, 1);
+		strncpy(lv.log_vol_ident + 1, vol_ident, strlen(vol_ident));
+		pad_string(lv.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
+		strncpy(lv.log_vol_ident + 127, &vol_ident_len, 1);
+		lv.log_block_size = 2048;
+		lv.domain_ident.flags = 0;
+		strncpy(lv.domain_ident.ident, osta_complient, strlen(osta_complient));
+		pad_string(lv.domain_ident.ident, strlen(osta_complient), 23, '\0');
+		pad_string(lv.domain_ident.ident_suffix, 0, 8, '\0');
+		// This unknown number is set in the log_vol_cont_use[1], according to the UDF standard this is not the way this field should be used :P
+		char unkNum2 = 0x10;
+		lv.log_vol_cont_use[0] = '\0';
+		strncpy(lv.log_vol_cont_use + 1, &unkNum2, 1);
+		pad_string(lv.log_vol_cont_use, 2, 16, '\0');
+		lv.map_table_len = 6;
+		lv.num_of_part_maps = 1;
+		lv.impl_ident.flags = 0;
+		strncpy(lv.impl_ident.ident, dvd_gen, strlen(dvd_gen));
+		pad_string(lv.impl_ident.ident, strlen(dvd_gen), 23, '\0');
+		pad_string(lv.impl_ident.ident_suffix, 0, 8, '\0');
+		pad_string((char*)lv.impl_use, 0, 128, '\0');
+		lv.int_seq_extent.length = 4096;
+		lv.int_seq_extent.location = 64;
+		lv.part_maps[0] = 1;
+		lv.part_maps[1] = 6;
+		lv.part_maps[2] = 1;
+		pad_string((char*)lv.part_maps, 3, 6, '\0');
+		auto lv_checksum = cksum(((unsigned char*)&lv) + sizeof(DescriptorTag), sizeof(LogicalVolumeDescriptor) - sizeof(DescriptorTag));
+		lv_tag.desc_crc = lv_checksum;
+		lv_tag.tag_checksum = 0;
+		tag_cksum = cksum_tag((unsigned char*)&lv_tag, sizeof(DescriptorTag));
+		lv_tag.tag_checksum = tag_cksum;
+		sm.write_sector<LogicalVolumeDescriptor>(f, &lv, sizeof(LogicalVolumeDescriptor));
+#pragma endregion
 
 		// Write unallocated space descriptor
+#pragma region UnallocatedSpaceDescriptor
+		UnallocatedSpaceDescriptor usd;
+		DescriptorTag& usd_tag = usd.tag;
+		usd_tag.tag_ident = cur_tag_ident++;
+		usd_tag.desc_version = cur_tag_desc_ver;
+		usd_tag.desc_crc_len = 2032;
+		usd_tag.tag_location = sm.get_current_sector();
+		// Tag checksum and its desc crc fields are written after descriptor has been filled
+		usd.vol_desc_seq_num = cur_vol_desc_seq_num++;
+		usd.alloc_desc.length = 0;
+		usd.alloc_desc.location = 0;
+		usd.num_of_alloc_desc = 0;
+		auto usd_checksum = cksum(((unsigned char*)&usd) + sizeof(DescriptorTag), sizeof(UnallocatedSpaceDescriptor) - sizeof(DescriptorTag));
+		usd_tag.desc_crc = usd_checksum;
+		usd_tag.tag_checksum = 0;
+		tag_cksum = cksum_tag((unsigned char*)&usd_tag, sizeof(DescriptorTag));
+		usd_tag.tag_checksum = tag_cksum;
+		sm.write_sector<UnallocatedSpaceDescriptor>(f, &usd, sizeof(UnallocatedSpaceDescriptor));
+#pragma endregion
 
 		// Write terminating descriptor
+		TerminatingDescriptor td;
+		DescriptorTag& td_tag = td.tag;
+		td_tag.tag_ident = cur_tag_ident++;
+		td_tag.desc_version = cur_tag_desc_ver;
+		td_tag.desc_crc_len = 2032;
+		td_tag.tag_location = sm.get_current_sector();
+		auto td_checksum = cksum(((unsigned char*)&td) + sizeof(DescriptorTag), sizeof(TerminatingDescriptor) - sizeof(DescriptorTag));
+		td_tag.desc_crc = td_checksum;
+		td_tag.tag_checksum = 0;
+		tag_cksum = cksum_tag((unsigned char*)&td_tag, sizeof(DescriptorTag));
+		td_tag.tag_checksum = tag_cksum;
+		sm.write_sector<TerminatingDescriptor>(f, &td, sizeof(TerminatingDescriptor));
 
 		// Write trailing logical sectors
 		for (int j = 0; j < 10; ++j) {
@@ -365,8 +444,68 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	}
 
 	// Write logical volume integrity descriptor
+#pragma region LogicalVolumeIntegrityDescriptor writing
+	LogicalVolumeIntegrityDescriptor lvi;
+	DescriptorTag& lvi_tag = lvi.tag;
+	lvi_tag.tag_ident = 9;
+	lvi_tag.desc_version = 2;
+	lvi_tag.desc_crc_len = 2032;
+	lvi_tag.tag_location = sm.get_current_sector();
+	// Tag checksum and its desc crc fields are written after descriptor has been filled
+	// Just record date and time whenever Twinsanity PAL was released
+	lvi.rec_date_and_time.microseconds = 0;
+	lvi.rec_date_and_time.milliseconds = 0;
+	lvi.rec_date_and_time.centiseconds = 0;
+	lvi.rec_date_and_time.second = 47;
+	lvi.rec_date_and_time.minute = 33;
+	lvi.rec_date_and_time.hour = 7;
+	lvi.rec_date_and_time.day = 3;
+	lvi.rec_date_and_time.month = 9;
+	lvi.rec_date_and_time.year = 2004;
+	lvi.rec_date_and_time.type_and_timezone = 0x121C;
+	lvi.integ_type = 1;
+	lvi.next_integ_extent.length = 0;
+	lvi.next_integ_extent.location = 0;
+	pad_string(lvi.log_vol_cont_use, 0, 4, (char)0xFF);
+	pad_string(lvi.log_vol_cont_use, 4, 32, '\0');
+	lvi.num_of_partitions = 1;
+	lvi.len_of_impl_use = 48; // Constant for PS2 discs
+	lvi.free_space_table = 0;
+	lvi.size_table = sm.get_total_sectors() - sm.get_partition_start_sector() - 1;
+	lvi.impl_use.impl_id.flags = 0;
+	strncpy(lvi.impl_use.impl_id.ident, dvd_gen, strlen(dvd_gen));
+	pad_string(lvi.impl_use.impl_id.ident, strlen(dvd_gen), 23, '\0');
+	pad_string(lvi.impl_use.impl_id.ident_suffix, 0, 8, '\0');
+	lvi.impl_use.num_of_files = sm.get_total_files();
+	lvi.impl_use.num_of_dirs = sm.get_total_directories();
+	uint min_udf_ver = 258; // Indicates version 2.58? of UDF standard for some reason this is the version PS2 games set when OSTA only provides version 2.50
+	lvi.impl_use.min_udf_read_rev = min_udf_ver;
+	lvi.impl_use.min_udf_write_rev = min_udf_ver;
+	lvi.impl_use.max_udf_write_rev = min_udf_ver;
+	lvi.impl_use.impl_use[0] = '\0';
+	lvi.impl_use.impl_use[1] = '\0';
+	auto lvi_checksum = cksum(((unsigned char*)&lvi) + sizeof(DescriptorTag), sizeof(LogicalVolumeIntegrityDescriptor) - sizeof(DescriptorTag));
+	lvi_tag.desc_crc = lvi_checksum;
+	lvi_tag.tag_checksum = 0;
+	auto tag_cksum = cksum_tag((unsigned char*)&lvi_tag, sizeof(DescriptorTag));
+	lvi_tag.tag_checksum = tag_cksum;
+	sm.write_sector<LogicalVolumeIntegrityDescriptor>(f, &lvi, sizeof(LogicalVolumeIntegrityDescriptor));
+#pragma endregion
+
 
 	// Write terminating descriptor
+	TerminatingDescriptor td;
+	DescriptorTag& td_tag = td.tag;
+	td_tag.tag_ident = 8;
+	td_tag.desc_version = 2;
+	td_tag.desc_crc_len = 2032;
+	td_tag.tag_location = sm.get_current_sector();
+	auto td_checksum = cksum(((unsigned char*)&td) + sizeof(DescriptorTag), sizeof(TerminatingDescriptor) - sizeof(DescriptorTag));
+	td_tag.desc_crc = td_checksum;
+	td_tag.tag_checksum = 0;
+	tag_cksum = cksum_tag((unsigned char*)&td_tag, sizeof(DescriptorTag));
+	td_tag.tag_checksum = tag_cksum;
+	sm.write_sector<TerminatingDescriptor>(f, &td, sizeof(TerminatingDescriptor));
 
 	// Skip reserved sectors until sector 256
 	for (int i = 0; i < 190; ++i) {
@@ -375,10 +514,42 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	}
 
 	// Write anchor volume descriptor pointer
+#pragma region AnchorVolumeDescriptorPointer writing
+	AnchorVolumeDescriptorPointer avd;
+	DescriptorTag& avd_tag = avd.tag;
+	avd_tag.tag_ident = 2;
+	avd_tag.desc_version = 2;
+	avd_tag.desc_crc_len = 2032;
+	avd_tag.tag_location = sm.get_current_sector();
+	// Tag checksum and its desc crc fields are written after descriptor has been filled
+	avd.main_vol_desc_seq_extent.length = 0x8000;
+	avd.main_vol_desc_seq_extent.location = 32;
+	avd.reserve_vol_desc_seq_extent.length = 0x8000;
+	avd.reserve_vol_desc_seq_extent.location = 48;
+	pad_string((char*)avd.reserved, 0, 480, '\0');
+	auto avd_checksum = cksum(((unsigned char*)&avd) + sizeof(DescriptorTag), sizeof(AnchorVolumeDescriptorPointer) - sizeof(DescriptorTag));
+	avd_tag.desc_crc = avd_checksum;
+	avd_tag.tag_checksum = 0;
+	tag_cksum = cksum_tag((unsigned char*)&avd_tag, sizeof(DescriptorTag));
+	avd_tag.tag_checksum = tag_cksum;
+	sm.write_sector<AnchorVolumeDescriptorPointer>(f, &avd, sizeof(AnchorVolumeDescriptorPointer));
+#pragma endregion
+
+	// Hell yeah, I love my pure C malloc
+	uint ptz = get_path_table_size(ft);
+	char* path_table_buffer = (char*)malloc(ptz); // Buffer where all the path stuff is written to
+	memset(path_table_buffer, 0, ptz);
 
 	// Write path table L and option L
+	fill_path_table(path_table_buffer, ft);
+	sm.write_sector<char>(f, path_table_buffer, ptz);
+	sm.write_sector<char>(f, path_table_buffer, ptz);
 
 	// Write path table M and option M
+	fill_path_table(path_table_buffer, ft, true);
+	sm.write_sector<char>(f, path_table_buffer, ptz);
+	sm.write_sector<char>(f, path_table_buffer, ptz);
+
 
 	// Write directory records
 
@@ -445,5 +616,100 @@ unsigned int get_path_table_size(FileTree* ft) {
 void pad_string(char* str, int offset, int size, const char pad) {
 	for (int i = 0; i < size - offset; ++i) {
 		strncpy(str + offset + i, &pad, 1);
+	}
+}
+
+void _fill_path_table(char* buffer, FileTreeNode* node, int& offset, uint& start_lba, ushort par_index, bool msb) {
+	buffer[offset++] = node->file->GetName().size();
+	buffer[offset++] = 0;
+	uint* lba = (uint*)(buffer + offset);
+	*lba = msb ? changeEndianness32(start_lba) : start_lba;
+	start_lba++;
+	offset += 4;
+	ushort par_dir_num = msb ? changeEndianness16(par_index) : par_index;
+	ushort* par_dir_num_ptr = (ushort*)(buffer + offset);
+	*par_dir_num_ptr = par_dir_num;
+	offset += 2;
+	std::string upper = node->file->GetName();
+	std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+	strncpy(buffer + offset, upper.c_str(), node->file->GetName().size());
+	offset += node->file->GetName().size();
+	// Add padding if dir name length is odd
+	if (node->file->GetName().size() % 2 == 1) {
+		buffer[offset++] = '\0';
+	}
+}
+
+struct DirectoryDepth {
+	FileTreeNode* node;
+	int depth;
+	int par_index;
+};
+
+void _explore_tree(FileTreeNode* node, std::vector<DirectoryDepth>& vec, int depth) {
+	for (auto node : node->next->tree) {
+		if (node->file->IsDirectory()) {
+			_explore_tree(node, vec, depth + 1);
+			DirectoryDepth dir_depth;
+			dir_depth.depth = depth;
+			dir_depth.node = node;
+			vec.push_back(dir_depth);
+		}
+	}
+}
+
+void fill_path_table(char* buffer, FileTree* ft, bool msb) {
+	// Fill in the root table
+	buffer[0] = 1; // Ident len
+	buffer[1] = 0; // ext_rec_attrib_len
+	uint lba = msb ? changeEndianness32(261) : 261;
+	uint* lba_ptr = (uint*)(buffer + 2);
+	*lba_ptr = lba;
+	ushort par_dir_num = msb ? changeEndianness16(1) : 1;
+	ushort* par_dir_num_ptr = (ushort*)(buffer + 6);
+	*par_dir_num_ptr = par_dir_num;
+	buffer[8] = 0; // Root ident
+	buffer[9] = 0; // Pad
+	std::vector<DirectoryDepth> depths;
+	std::map<FileTreeNode*, ushort> par_index_map;
+	int depth = 0;
+	// Explore the tree
+	for (auto node : ft->tree) {
+		if (node->file->IsDirectory()) {
+			_explore_tree(node, depths, depth + 1);
+			DirectoryDepth dir_depth;
+			dir_depth.depth = depth;
+			dir_depth.par_index = 1;
+			dir_depth.node = node;
+			depths.push_back(dir_depth);
+			par_index_map.emplace(std::pair<FileTreeNode*, int>(node, 1));
+		}
+	}
+	// Sort by depth
+	std::sort(depths.begin(), depths.end(), [](DirectoryDepth& dir1, DirectoryDepth& dir2) {
+		return dir1.depth < dir2.depth;
+	});
+	// Map node's children to a parent index
+	if (depths.size() != 0) {
+		ushort par_index = 2;
+		for (const auto& depth : depths) {
+			// Check for having children
+			if (depth.node->next != nullptr) {
+				for (const auto& node : depth.node->next->tree) {
+					if (node->file->IsDirectory()) {
+						par_index_map.emplace(std::pair<FileTreeNode*, int>(node, par_index));
+					}
+				}
+			}
+			par_index++;
+		}
+	}
+	// Fill table based on depth
+	if (depths.size() != 0) {
+		int offset = 10;
+		uint init_lba = 262;
+		for (const auto& depth : depths) {
+			_fill_path_table(buffer, depth.node, offset, init_lba, par_index_map.at(depth.node), msb);
+		}
 	}
 }

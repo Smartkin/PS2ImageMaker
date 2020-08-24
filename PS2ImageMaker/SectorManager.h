@@ -16,6 +16,8 @@ public:
 	unsigned int get_total_sectors();
 	long get_current_sector();
 	unsigned int get_partition_start_sector();
+	long get_total_files();
+	long get_total_directories();
 
 private:
 	long current_sector;

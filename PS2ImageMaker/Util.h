@@ -169,6 +169,14 @@ unsigned short cksum(unsigned char* s, int n)
 		crc = crc_table[(crc >> 8 ^ *s++) & 0xff] ^ (crc << 8);
 	return crc;
 }
+byte cksum_tag(unsigned char* s, int n) {
+	register unsigned char checksum = 0;
+	for (int i = 0; i < n; ++i) {
+		if (i == 4) continue;
+		checksum += s[i];
+	}
+	return checksum;
+}
 /* UNICODE Checksum */
 unsigned short unicode_cksum(unsigned short* s, int n)
 {
