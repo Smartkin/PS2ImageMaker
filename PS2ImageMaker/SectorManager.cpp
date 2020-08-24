@@ -14,6 +14,7 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	auto file_ident_descriptors = this->directories;
 	auto file_entry_directories = this->directories;
 	auto file_entry_files = this->files;
+	partition_start_sector = 261 + directory_records;
 	// Offset data sector by however many header sectors will be needed for files and directories
 	data_sector += directory_records + file_set_descriptors + terminating_descriptors + file_ident_descriptors + file_entry_directories + file_entry_files;
 	auto data_sectors = ft->get_files_size() / 2048;
@@ -49,4 +50,9 @@ unsigned int SectorManager::get_total_sectors()
 long SectorManager::get_current_sector()
 {
 	return current_sector;
+}
+
+unsigned int SectorManager::get_partition_start_sector()
+{
+	return partition_start_sector;
 }

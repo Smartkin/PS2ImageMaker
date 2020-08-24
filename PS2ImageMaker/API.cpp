@@ -55,7 +55,8 @@ void pack(Progress* pr, const char* game_path, const char* dest_path) {
 }
 
 // All the writing for each sector is packed into this single function instead of having each sector to be in its separate function
-// biggest reason is because all sectors need a very strict ordering
+// biggest reason is because all sectors need a very strict ordering so instead of creating a seperate function for each
+// they are just divided into section, additionally certain sector's data can depend on others
 void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
@@ -197,15 +198,15 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		ushort cur_tag_ident = 1;
 		ushort cur_tag_desc_ver = 2;
 		uint cur_vol_desc_seq_num = 0;
-		// Write primary volume descriptor UDF
-		PrimaryVolumeDescriptor_UDF pvd;
-		DescriptorTag& tag = pvd.tag; // Reference to currently written to descriptor tag
+		// Write primary volume descriptor UDF	
 #pragma region PrimaryVolumeDescriptor_UDF writing
-		tag.tag_ident = cur_tag_ident;
-		tag.desc_version = cur_tag_desc_ver;
+		PrimaryVolumeDescriptor_UDF pvd;
+		DescriptorTag& pvd_tag = pvd.tag; // Reference to currently written to descriptor tag
+		pvd_tag.tag_ident = cur_tag_ident;
+		pvd_tag.desc_version = cur_tag_desc_ver;
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
-		tag.desc_crc_len = 2032;
-		tag.tag_location = sm.get_current_sector();
+		pvd_tag.desc_crc_len = 2032;
+		pvd_tag.tag_location = sm.get_current_sector();
 		pvd.vol_desc_seq_num = cur_vol_desc_seq_num++;
 		pvd.prim_vol_desc_num = 0;
 		char unkNum = 0x8; // This is put as the first char in vol_ident of every PS2 game, no clue why
@@ -260,10 +261,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pvd.pred_vol_desc_seq_loc = 0;
 		pad_string((char*)pvd.reserved, 0, 22, '\0');
 		auto pvd_checksum = cksum((unsigned char*)&pvd, sizeof(PrimaryVolumeDescriptor_UDF));
-		tag.desc_crc = pvd_checksum;
-		tag.tag_checksum = 0;
-		auto tag_cksum = cksum((unsigned char*)&tag, sizeof(DescriptorTag));
-		tag.tag_checksum = tag_cksum;
+		pvd_tag.desc_crc = pvd_checksum;
+		pvd_tag.tag_checksum = 0;
+		auto tag_cksum = cksum((unsigned char*)&pvd_tag, sizeof(DescriptorTag));
+		pvd_tag.tag_checksum = tag_cksum;
 		sm.write_sector<PrimaryVolumeDescriptor_UDF>(f, &pvd, sizeof(PrimaryVolumeDescriptor_UDF));
 #pragma endregion
 		cur_tag_ident = 4; // Other identifiers start couting from here
@@ -274,7 +275,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		DescriptorTag& iuv_tag = iuv.tag;
 		iuv_tag.tag_ident = cur_tag_ident++;
 		iuv_tag.desc_crc_len = 2032;
-		iuv_tag.desc_version = 2;
+		iuv_tag.desc_version = cur_tag_desc_ver;
 		iuv_tag.tag_location = sm.get_current_sector();
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
 		iuv.vol_desc_seq_num = cur_vol_desc_seq_num++;
@@ -315,6 +316,40 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 #pragma endregion
 
 		// Write partition descriptor
+#pragma region PartitionDescriptor writing
+		PartitionDescriptor pd;
+		DescriptorTag& pd_tag = pd.tag;
+		pd_tag.tag_ident = cur_tag_ident++;
+		pd_tag.desc_version = cur_tag_desc_ver;
+		pd_tag.desc_crc_len = 2032;
+		pd_tag.tag_location = sm.get_current_sector();
+		// Tag checksum and its desc crc fields are written after descriptor has been filled
+		pd.vol_desc_seq_num = cur_vol_desc_seq_num++;
+		pd.part_flags = 1;
+		pd.part_num = 0;
+		pd.part_contents.flags = 2;
+		auto nsr = "+NSR02";
+		strncpy(pd.part_contents.ident, nsr, strlen(nsr));
+		pad_string(pd.part_contents.ident, strlen(nsr), 23, '\0');
+		pad_string(pd.part_contents.ident_suffix, 0, 8, '\0');
+		pad_string(pd.part_cont_use, 0, 128, '\0');
+		pd.access_type = 1;
+		pd.part_start_loc = sm.get_partition_start_sector();
+		pd.part_len = sm.get_total_sectors() - sm.get_partition_start_sector() - 1;
+		pd.impl_ident.flags = 0;
+		strncpy(pd.impl_ident.ident, dvd_gen, strlen(dvd_gen));
+		pad_string(pd.impl_ident.ident, strlen(dvd_gen), 23, '\0');
+		pad_string(pd.impl_ident.ident_suffix, 0, 8, '\0');
+		pad_string((char*)pd.impl_use, 0, 128, '\0');
+		pad_string((char*)pd.reserved, 0, 156, '\0');
+		auto pd_checksum = cksum((unsigned char*)&pd, sizeof(PartitionDescriptor));
+		pd_tag.desc_crc = pd_checksum;
+		pd_tag.tag_checksum = 0;
+		tag_cksum = cksum((unsigned char*)&pd_tag, sizeof(DescriptorTag));
+		pd_tag.tag_checksum = tag_cksum;
+		sm.write_sector<PartitionDescriptor>(f, &pd, sizeof(PartitionDescriptor));
+#pragma endregion
+		f.close();
 
 		// Write logical volume descriptor
 

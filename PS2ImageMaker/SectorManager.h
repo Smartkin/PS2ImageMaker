@@ -15,6 +15,7 @@ public:
 	void pad_sector(std::ofstream& f, int padding_size);
 	unsigned int get_total_sectors();
 	long get_current_sector();
+	unsigned int get_partition_start_sector();
 
 private:
 	long current_sector;
@@ -22,6 +23,7 @@ private:
 	long directories;
 	long files;
 	unsigned int total_sectors;
+	unsigned int partition_start_sector;
 };
 
 template<typename T>
