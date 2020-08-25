@@ -8,8 +8,9 @@ struct FileTree;
 struct FileTreeNode {
 	FileTree* next;
 	File* file;
+	FileTreeNode* parent;
 	int depth;
-	FileTreeNode(FileTree* next, File* file) : next(next), file(file), depth(0) {}
+	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0) {}
 };
 
 struct FileTree {

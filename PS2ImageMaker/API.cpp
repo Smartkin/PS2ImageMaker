@@ -596,14 +596,13 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	nav_prev.file_ident = 1;
 	auto cur_tree = ft;
 	FileTreeNode* cur_dir = nullptr;
-	FileTreeNode* prev_dir = nullptr;
 	auto prev_dir_len = root_len;
 	for (int i = 0; i < directories; ++i) {
 		auto needed_memory = 96; // Amount of needed memory for a sector
 		auto index = 0;
 		auto dir_len = 0x30 * 2U;
+		// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 		if (cur_dir != nullptr) {
-			// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 			for (auto node : cur_tree->tree) {
 				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
 			}
@@ -611,11 +610,21 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 			nav_this.data_len_msb = changeEndianness32(dir_len);
 			nav_this.loc_of_ext_lsb = sm.get_file_sector(cur_dir);
 			nav_this.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir));
-			if (prev_dir != nullptr) {
-				nav_prev.data_len_lsb = prev_dir_len;
-				nav_prev.data_len_msb = changeEndianness32(prev_dir_len);
-				nav_prev.loc_of_ext_lsb = sm.get_file_sector(prev_dir);
-				nav_prev.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(prev_dir));
+			if (cur_dir->parent != nullptr) {
+				auto par_dir_len = 0x30 * 2U;
+				for (auto node : cur_dir->parent->next->tree) {
+					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
+				}
+				nav_prev.data_len_lsb = par_dir_len;
+				nav_prev.data_len_msb = changeEndianness32(par_dir_len);
+				nav_prev.loc_of_ext_lsb = sm.get_file_sector(cur_dir->parent);
+				nav_prev.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir->parent));
+			}
+			else {
+				nav_prev.loc_of_ext_lsb = 261;
+				nav_prev.loc_of_ext_msb = changeEndianness32(261);
+				nav_prev.data_len_lsb = root_len;
+				nav_prev.data_len_msb = changeEndianness32(root_len);
 			}
 		}
 
@@ -728,14 +737,12 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 		// Update current tree
 		if (i != directories - 1) {
-			prev_dir_len = dir_len;
-			prev_dir = cur_dir;
 			cur_dir = sm.get_directories()[i];
 			cur_tree = cur_dir->next;
 		}
 	}
 #pragma endregion
-	f.close();
+
 	// Write file set descriptor
 
 	// Write terminating descriptor
