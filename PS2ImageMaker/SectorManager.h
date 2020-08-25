@@ -6,6 +6,11 @@
 struct FileTree;
 struct FileTreeNode;
 
+struct FileLocation {
+	unsigned int global_sector; // starting from the top of the disc
+	unsigned int lba; // starting from FileIdentifierDescriptor sector
+};
+
 class SectorManager
 {
 public:
@@ -22,6 +27,7 @@ public:
 	long get_total_files();
 	long get_total_directories();
 	unsigned int get_file_sector(FileTreeNode* node);
+	unsigned int get_file_lba(FileTreeNode* node);
 	std::vector<FileTreeNode*> get_directories();
 
 private:
@@ -34,7 +40,7 @@ private:
 	long files;
 	unsigned int total_sectors;
 	unsigned int partition_start_sector;
-	std::vector<std::pair<FileTreeNode*, unsigned int>> file_sectors;
+	std::vector<std::pair<FileTreeNode*, FileLocation>> file_sectors;
 	std::vector<FileTreeNode*> directories;
 };
 

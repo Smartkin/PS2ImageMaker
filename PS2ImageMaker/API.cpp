@@ -18,6 +18,7 @@ void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f, FileTree
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
+unsigned int fill_fdi(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
@@ -818,33 +819,83 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	ushort cur_spec_lba = 2;
 
 	// Write file identifier descriptor
+#pragma region FileIdentifierDescriptors writing
 	FileIdentifierDescriptor fi_root;
 	DescriptorTag& fi_root_tag = fi_root.tag;
 	fi_root_tag.tag_ident = 0x101;
 	fi_root_tag.desc_version = 2;
 	fi_root_tag.desc_crc_len = 0x18;
-	fi_root_tag.tag_location = cur_spec_lba;
 	// Tag checksum etc. etc. you know the drill
 	fi_root.file_ver_num = 1;
 	fi_root.file_chars = 0xA;
 	fi_root.len_of_file_ident = 0;
 	fi_root.icb.extent_len = 0x13C;
-	fi_root.icb.extent_loc.log_block_num = cur_spec_lba; // The only part that changes for root FID in other directories
+	fi_root.icb.extent_loc.log_block_num = cur_spec_lba + directories; // The only part that changes for root FID in other directories, also its tag CRC
 	fi_root.icb.extent_loc.part_ref_num = 0;
 	pad_string((char*)fi_root.icb.impl_use, 0, 6, '\0');
 	fi_root.len_of_impl_use = 0;
 	fi_root.impl_use = '\0';
 	fi_root.file_ident = '\0';
-	auto fi_checksum = cksum(((unsigned char*)&fi_root) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
-	fi_root_tag.desc_crc = fi_checksum;
-	fi_root_tag.tag_checksum = 0;
-	tag_cksum = cksum_tag((unsigned char*)&fi_root_tag, sizeof(DescriptorTag));
-	fi_root_tag.tag_checksum = tag_cksum;
 	cur_tree = ft;
 	cur_dir = nullptr;
 	for (int i = 0; i < directories; ++i) {
+		// Update root's lba and its checksum
+		fi_root_tag.tag_location = cur_spec_lba;
+		auto fi_checksum = cksum(((unsigned char*)&fi_root) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
+		fi_root_tag.desc_crc = fi_checksum;
+		fi_root_tag.tag_checksum = 0;
+		tag_cksum = cksum_tag((unsigned char*)&fi_root_tag, sizeof(DescriptorTag));
+		fi_root_tag.tag_checksum = tag_cksum;
+		if (cur_dir != nullptr) {
+			fi_root.icb.extent_loc.log_block_num = sm.get_file_lba(cur_dir);
+		}
 
+		int needed_memory = sizeof(FileIdentifierDescriptor); // Root descriptor is always included
+		int index = 0;
+		FileIdentifierDescriptor* file_idents = new FileIdentifierDescriptor[cur_tree->tree.size()];
+		std::vector<FileTreeNode*> files;
+		std::vector<std::string> file_names;
+		std::vector<std::pair<char*, unsigned int>> buffers;
+		// Write folders first and files later
+		for (auto node : cur_tree->tree) {
+			if (node->file->IsDirectory()) {
+				needed_memory += fill_fdi(sm, file_idents[index++], node, cur_spec_lba, buffers);
+			}
+			else {
+				files.push_back(node);
+			}
+		}
+
+		// Fill in the files
+		for (auto file : files) {
+			needed_memory += fill_fdi(sm, file_idents[index++], file, cur_spec_lba, buffers);
+		}
+
+		// Write the data to the sector
+		char* buffer = (char*)malloc(needed_memory);
+		int offset = 0;
+		memcpy(buffer, &fi_root, sizeof(FileIdentifierDescriptor));
+		offset += sizeof(FileIdentifierDescriptor);
+		for (auto p : buffers) {
+			memcpy(buffer + offset, p.first, p.second);
+			offset += p.second;
+			free(p.first);
+		}
+		if (needed_memory - offset > 0) {
+			memset(buffer + offset, 0, needed_memory - offset);
+		}
+		sm.write_sector<char>(f, buffer, needed_memory);
+		free(buffer);
+
+		// Update current tree
+		if (i != directories - 1) {
+			cur_dir = sm.get_directories()[i];
+			cur_tree = cur_dir->next;
+			cur_spec_lba++;
+		}
 	}
+#pragma endregion
+	f.close();
 
 	// Write file entries for directories
 
@@ -898,6 +949,7 @@ unsigned int get_path_table_size(FileTree* ft) {
 	return size;
 }
 
+// Helper function for filling a string
 void pad_string(char* str, int offset, int size, const char pad) {
 	for (int i = 0; i < size - offset; ++i) {
 		strncpy(str + offset + i, &pad, 1);
@@ -998,4 +1050,49 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 			_fill_path_table(buffer, depth.node, offset, init_lba, par_index_map.at(depth.node), msb);
 		}
 	}
+}
+
+unsigned int fill_fdi(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers) {
+	DescriptorTag& tag = fi.tag;
+	auto file_name_size = node->file->GetName().size();
+	auto file_str_len = file_name_size * 2 + 1; // 1 additional byte for unicode compression id
+	auto struct_size = sizeof(FileIdentifierDescriptor) - 1 + file_str_len + (file_name_size % 2) * 2;
+	tag.tag_ident = 0x101;
+	tag.desc_version = 2;
+	tag.tag_location = cur_spec_lba;
+	tag.desc_crc_len = struct_size - sizeof(DescriptorTag);
+	fi.file_ver_num = 1;
+	fi.file_chars = 2;
+	fi.len_of_file_ident = file_str_len;
+	fi.icb.extent_len = 0x13C;
+	fi.icb.extent_loc.log_block_num = sm.get_file_lba(node);
+	fi.icb.extent_loc.part_ref_num = 0;
+	pad_string((char*)fi.icb.impl_use, 0, 6, '\0');
+	fi.len_of_impl_use = 0;
+	fi.impl_use = 0x10;
+	fi.file_ident = '\0';
+	// needed_memory += struct_size;
+	auto f_buf_len = (file_name_size + file_name_size % 2) * 2;
+	auto f_name_buf = new char[f_buf_len];
+	std::string udf_comp({ 0x8 });
+	udf_comp.append(node->file->GetName());
+	if (file_name_size % 2 != 0) {
+		udf_comp.append({'\0'});
+	}
+	UncompressUnicode(udf_comp.size(), (unsigned char*)udf_comp.c_str(), (unicode_t*)f_name_buf);
+	char* str_buf = (char*)malloc(struct_size);
+	// First write the whole main struct without descriptor tag to allow tag calculate the checksum
+	memcpy(str_buf + sizeof(DescriptorTag), ((char*)&fi) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
+	memcpy(str_buf + sizeof(FileIdentifierDescriptor), f_name_buf, f_buf_len);
+	auto fi_checksum = cksum(((unsigned char*)str_buf) + sizeof(DescriptorTag), struct_size - sizeof(DescriptorTag));
+	tag.desc_crc = fi_checksum;
+	tag.tag_checksum = 0;
+	auto tag_cksum = cksum_tag((unsigned char*)&tag, sizeof(DescriptorTag));
+	tag.tag_checksum = tag_cksum;
+	// Write the tag at the end
+	memcpy(str_buf, &tag, sizeof(DescriptorTag));
+	buffers.push_back(std::pair<char*, unsigned int>(str_buf, struct_size));
+	// At the moment the only buffer we can free because it's copied everywhere necessary and not needed anymore
+	delete[] f_name_buf;
+	return struct_size;
 }

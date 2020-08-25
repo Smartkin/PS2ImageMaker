@@ -303,14 +303,14 @@ struct FileSetDescriptor {
 
 
 struct FileIdentifierDescriptor { // These are written from Root to the very bottom folder, Root is a parent of Root
-	DescriptorTag tag;
+	DescriptorTag tag; // Length 16
 	ushort file_ver_num;
 	byte file_chars;
 	byte len_of_file_ident;
-	LongAllocDescriptor icb;
+	LongAllocDescriptor icb; // Length 16
 	ushort len_of_impl_use;
 	byte impl_use;
-	char file_ident; // Just add pad here if needed
+	char file_ident; // Mostly here for root folder, for actual folders some math and buffers are involved to compute proper size
 };
 
 struct ICBTag {

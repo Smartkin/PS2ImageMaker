@@ -79,10 +79,18 @@ long SectorManager::get_total_directories()
 
 unsigned int SectorManager::get_file_sector(FileTreeNode* node)
 {
-	auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, unsigned int> p) {
+	auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
 		return p.first == node;
 	});
-	return (*vec_iter).second;
+	return (*vec_iter).second.global_sector;
+}
+
+unsigned int SectorManager::get_file_lba(FileTreeNode* node)
+{
+	auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
+		return p.first == node;
+	});
+	return (*vec_iter).second.lba;
 }
 
 std::vector<FileTreeNode*> SectorManager::get_directories()
@@ -93,7 +101,7 @@ std::vector<FileTreeNode*> SectorManager::get_directories()
 void SectorManager::_fill_file_sectors(FileTree* ft, bool root)
 {
 	for (auto node : ft->tree) {
-		file_sectors.push_back(std::pair<FileTreeNode*, int>(node, 0));
+		file_sectors.push_back(std::pair<FileTreeNode*, FileLocation>(node, FileLocation()));
 		if (node->file->IsDirectory()) {
 			_fill_file_sectors(node->next, false);
 		}
@@ -101,18 +109,22 @@ void SectorManager::_fill_file_sectors(FileTree* ft, bool root)
 	// Need to sort the map but only by the initial caller
 	if (!root) return;
 	// Sort by depth
-	std::sort(file_sectors.begin(), file_sectors.end(), [](std::pair<FileTreeNode*, unsigned int> f1, std::pair<FileTreeNode*, unsigned int>  f2) {
+	std::sort(file_sectors.begin(), file_sectors.end(), [](std::pair<FileTreeNode*, FileLocation> f1, std::pair<FileTreeNode*, FileLocation>  f2) {
 		return f1.first->depth < f2.first->depth;
 	});
 	unsigned int directory_record_sector = 262;
+	unsigned int dir_lba = 8;
 	unsigned int data_sec = data_sector;
+	unsigned int data_lba = 6 + this->directories_amount;
 	for (auto& file_sector : file_sectors) {
 		// If it's a directory use directory records sectors
 		if (file_sector.first->file->IsDirectory()) {
-			file_sector.second = directory_record_sector++;
+			file_sector.second.global_sector = directory_record_sector++;
+			file_sector.second.lba = dir_lba++;
 		}
 		else {
-			file_sector.second = data_sec;
+			file_sector.second.global_sector = data_sec;
+			file_sector.second.lba = data_lba++;
 			data_sec += file_sector.first->file->GetSize() / 2048 + (file_sector.first->file->GetSize() % 2048 == 0 ? 0 : 1);
 		}
 	}
