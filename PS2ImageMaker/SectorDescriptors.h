@@ -99,11 +99,11 @@ struct TerminatingExtendedAreaDescriptor {
 struct DescriptorTag {
 	ushort tag_ident;
 	ushort desc_version;
-	byte tag_checksum;
+	byte tag_checksum = 0;
 	byte reserved = '\0';
 	ushort tag_serial = 0; // Crash Twinsanity has this 0 for all its sectors so I assume all PS2 discs do as well :^)
 	ushort desc_crc;
-	ushort desc_crc_len; // = sizeof(Descriptor) - sizeof(DescriptorTag)
+	ushort desc_crc_len; // = sizeof(Descriptor) - sizeof(DescriptorTag), apparently in PS2's case it's just the entire sector. The only exception is FileIdentifierDescriptor
 	uint tag_location;
 };
 
@@ -310,8 +310,7 @@ struct FileIdentifierDescriptor { // These are written from Root to the very bot
 	LongAllocDescriptor icb;
 	ushort len_of_impl_use;
 	byte impl_use;
-	char file_ident;
-	byte pad;
+	char file_ident; // Just add pad here if needed
 };
 
 struct ICBTag {

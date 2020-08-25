@@ -199,6 +199,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	auto dvd_gen = "DVD-ROM GENERATOR";
 	auto udf_lv_info = "*UDF LV Info";
 	auto osta_complient = "*OSTA UDF Compliant";
+	char compID = 0x8; // Compression ID of 8
+	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
+	char id_suff[3] = { 0x2, 0x1, 0x3 };
 	// Write twice the same descriptors for Main and RSRV
 	for (int i = 0; i < 2; ++i) {
 		ushort cur_tag_ident = 1;
@@ -215,8 +218,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pvd_tag.tag_location = sm.get_current_sector();
 		pvd.vol_desc_seq_num = cur_vol_desc_seq_num++;
 		pvd.prim_vol_desc_num = 0;
-		char unkNum = 0x8; // This is put as the first char in vol_ident of every PS2 game, no clue why
-		strncpy(pvd.vol_ident, &unkNum, 1);
+		strncpy(pvd.vol_ident, &compID, 1);
 		strncpy(pvd.vol_ident + 1, vol_ident, strlen(vol_ident));
 		pad_string(pvd.vol_ident, strlen(vol_ident) + 1, 32, '\0');
 		strncpy(pvd.vol_ident + 31, &vol_ident_len, 1);
@@ -226,8 +228,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pvd.max_inter_level = 2;
 		pvd.character_set_list = 1;
 		pvd.max_char_set_list = 1;
-		strncpy(pvd.vol_set_ident, &unkNum, 1);
-		auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
+		strncpy(pvd.vol_set_ident, &compID, 1);
 		strncpy(pvd.vol_set_ident + 1, encoded_date, strlen(encoded_date));
 		pad_string(pvd.vol_set_ident, strlen(encoded_date) + 1, 128 - 36);
 		pad_string(pvd.vol_set_ident, strlen(encoded_date) + 1 + 36, 128, '\0');
@@ -291,14 +292,14 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		iuv.impl_use.lvi_charset.char_set_type = 0;
 		strncpy(iuv.impl_use.lvi_charset.char_set_info, osta, strlen(osta));
 		pad_string(iuv.impl_use.lvi_charset.char_set_info, strlen(osta), 63, '\0');
-		strncpy(iuv.impl_use.log_vol_ident, &unkNum, 1);
+		strncpy(iuv.impl_use.log_vol_ident, &compID, 1);
 		strncpy(iuv.impl_use.log_vol_ident + 1, vol_ident, strlen(vol_ident));
 		pad_string(iuv.impl_use.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
 		// Honestly what's wrong with these standard designers?
 		strncpy(iuv.impl_use.log_vol_ident + 127, &vol_ident_len, 1);
-		strncpy(iuv.impl_use.lvinfo1, &unkNum, 1);
-		strncpy(iuv.impl_use.lvinfo2, &unkNum, 1);
-		strncpy(iuv.impl_use.lvinfo3, &unkNum, 1);
+		strncpy(iuv.impl_use.lvinfo1, &compID, 1);
+		strncpy(iuv.impl_use.lvinfo2, &compID, 1);
+		strncpy(iuv.impl_use.lvinfo3, &compID, 1);
 		pad_string(iuv.impl_use.lvinfo1, 1, 36, '\0');
 		pad_string(iuv.impl_use.lvinfo2, 1, 36, '\0');
 		pad_string(iuv.impl_use.lvinfo3, 1, 36, '\0');
@@ -367,7 +368,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		lv.desc_char_set.char_set_type = 0;
 		strncpy(lv.desc_char_set.char_set_info, osta, strlen(osta));
 		pad_string(lv.desc_char_set.char_set_info, strlen(osta), 63, '\0');
-		strncpy(lv.log_vol_ident, &unkNum, 1);
+		strncpy(lv.log_vol_ident, &compID, 1);
 		strncpy(lv.log_vol_ident + 1, vol_ident, strlen(vol_ident));
 		pad_string(lv.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
 		strncpy(lv.log_vol_ident + 127, &vol_ident_len, 1);
@@ -386,7 +387,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		lv.impl_ident.flags = 0;
 		strncpy(lv.impl_ident.ident, dvd_gen, strlen(dvd_gen));
 		pad_string(lv.impl_ident.ident, strlen(dvd_gen), 23, '\0');
-		pad_string(lv.impl_ident.ident_suffix, 0, 8, '\0');
+		strncpy(lv.impl_ident.ident_suffix, id_suff, 3);
+		pad_string(lv.impl_ident.ident_suffix, 3, 8, '\0');
 		pad_string((char*)lv.impl_use, 0, 128, '\0');
 		lv.int_seq_extent.length = 4096;
 		lv.int_seq_extent.location = 64;
@@ -743,11 +745,106 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	}
 #pragma endregion
 
-	// Write file set descriptor
+	// Write file set descriptor, after this descriptor and its terminator starts special LBA addressing for tags and other stuff, this desctiptor is at LBA 0
+#pragma region FileSetDescriptor writing
+	FileSetDescriptor fs;
+	DescriptorTag& fs_tag = fs.tag;
+	fs_tag.tag_ident = 256;
+	fs_tag.desc_version = 2;
+	fs_tag.desc_crc_len = 2032;
+	fs_tag.tag_location = sm.get_current_sector();
+	// Tag checksum and its desc crc fields are written after descriptor has been filled
+	fs.rec_date_and_time.microseconds = 0;
+	fs.rec_date_and_time.milliseconds = 0;
+	fs.rec_date_and_time.centiseconds = 0;
+	fs.rec_date_and_time.second = 47;
+	fs.rec_date_and_time.minute = 33;
+	fs.rec_date_and_time.hour = 7;
+	fs.rec_date_and_time.day = 3;
+	fs.rec_date_and_time.month = 9;
+	fs.rec_date_and_time.year = 2004;
+	fs.rec_date_and_time.type_and_timezone = 0x121C;
+	fs.inter_level = 3;
+	fs.max_inter_level = 3;
+	fs.char_set_list = 1;
+	fs.max_char_set_list = 1;
+	fs.file_set_num = 0;
+	fs.file_set_desc_num = 0;
+	fs.log_vol_ident_char_set.char_set_type = 0;
+	strncpy(fs.log_vol_ident_char_set.char_set_info, osta, strlen(osta));
+	pad_string(fs.log_vol_ident_char_set.char_set_info, strlen(osta), 63, '\0');
+	strncpy(fs.log_vol_ident, &compID, 1);
+	strncpy(fs.log_vol_ident + 1, vol_ident, strlen(vol_ident));
+	pad_string(fs.log_vol_ident, strlen(vol_ident) + 1, 128, '\0');
+	strncpy(fs.log_vol_ident + 127, &vol_ident_len, 1);
+	fs.file_set_char_set.char_set_type = 0;
+	strncpy(fs.file_set_char_set.char_set_info, osta, strlen(osta));
+	pad_string(fs.file_set_char_set.char_set_info, strlen(osta), 63, '\0');
+	auto ps2_set = "PLAYSTATION2 DVD-ROM FILE SET";
+	strncpy(fs.file_set_ident, &compID, 1);
+	strncpy(fs.file_set_ident + 1, ps2_set, strlen(ps2_set));
+	char ps2_set_len = strlen(ps2_set) + 1;
+	pad_string(fs.file_set_ident, strlen(ps2_set) + 1, 32, '\0');
+	strncpy(fs.file_set_ident + 31, &ps2_set_len, 1);
+	pad_string(fs.copy_file_ident, 0, 32, '\0');
+	pad_string(fs.abstr_file_ident, 0, 32, '\0');
+	fs.root_dir_icb.extent_len = 0x13C;
+	fs.root_dir_icb.extent_loc.part_ref_num = 0;
+	fs.root_dir_icb.extent_loc.log_block_num = 2 + sm.get_total_directories(); // This is the amount of sectors past this descriptor
+	pad_string((char*)fs.root_dir_icb.impl_use, 0, 6, '\'0');
+	fs.domain_ident.flags = 0;
+	strncpy(fs.domain_ident.ident, osta_complient, strlen(osta_complient));
+	pad_string(fs.domain_ident.ident, strlen(osta_complient), 23, '\0');
+	strncpy(fs.domain_ident.ident_suffix, id_suff, 3);
+	pad_string(fs.domain_ident.ident_suffix, 3, 8, '\0');
+	fs.next_extent.extent_len = 0;
+	fs.next_extent.extent_loc.log_block_num = 0;
+	fs.next_extent.extent_loc.part_ref_num = 0;
+	pad_string((char*)fs.next_extent.impl_use, 0, 6, '\'0');
+	pad_string((char*)fs.reserved, 0, 48, '\'0');
+	auto fs_checksum = cksum(((unsigned char*)&fs) + sizeof(DescriptorTag), sizeof(FileSetDescriptor) - sizeof(DescriptorTag));
+	fs_tag.desc_crc = fs_checksum;
+	fs_tag.tag_checksum = 0;
+	tag_cksum = cksum_tag((unsigned char*)&fs_tag, sizeof(DescriptorTag));
+	fs_tag.tag_checksum = tag_cksum;
+	sm.write_sector<FileSetDescriptor>(f, &fs, sizeof(FileSetDescriptor));
+#pragma endregion
+
 
 	// Write terminating descriptor
+	td_tag.tag_location = sm.get_current_sector();
+	sm.write_sector<TerminatingDescriptor>(f, &td, sizeof(TerminatingDescriptor));
+	// Start special LBA counter
+	ushort cur_spec_lba = 2;
 
 	// Write file identifier descriptor
+	FileIdentifierDescriptor fi_root;
+	DescriptorTag& fi_root_tag = fi_root.tag;
+	fi_root_tag.tag_ident = 0x101;
+	fi_root_tag.desc_version = 2;
+	fi_root_tag.desc_crc_len = 0x18;
+	fi_root_tag.tag_location = cur_spec_lba;
+	// Tag checksum etc. etc. you know the drill
+	fi_root.file_ver_num = 1;
+	fi_root.file_chars = 0xA;
+	fi_root.len_of_file_ident = 0;
+	fi_root.icb.extent_len = 0x13C;
+	fi_root.icb.extent_loc.log_block_num = cur_spec_lba; // The only part that changes for root FID in other directories
+	fi_root.icb.extent_loc.part_ref_num = 0;
+	pad_string((char*)fi_root.icb.impl_use, 0, 6, '\0');
+	fi_root.len_of_impl_use = 0;
+	fi_root.impl_use = '\0';
+	fi_root.file_ident = '\0';
+	auto fi_checksum = cksum(((unsigned char*)&fi_root) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
+	fi_root_tag.desc_crc = fi_checksum;
+	fi_root_tag.tag_checksum = 0;
+	tag_cksum = cksum_tag((unsigned char*)&fi_root_tag, sizeof(DescriptorTag));
+	fi_root_tag.tag_checksum = tag_cksum;
+	cur_tree = ft;
+	cur_dir = nullptr;
+	for (int i = 0; i < directories; ++i) {
+
+	}
 
 	// Write file entries for directories
 
@@ -781,7 +878,6 @@ void update_progress_message(Progress* pr, const char* message) {
 	pr->new_message = true;
 }
 
-
 void _get_path_table_size(FileTreeNode* node, unsigned int& size) {
 	for (auto node : node->next->tree) {
 		if (node->file->IsDirectory()) {
@@ -801,7 +897,6 @@ unsigned int get_path_table_size(FileTree* ft) {
 	}
 	return size;
 }
-
 
 void pad_string(char* str, int offset, int size, const char pad) {
 	for (int i = 0; i < size - offset; ++i) {
