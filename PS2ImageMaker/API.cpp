@@ -895,7 +895,6 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		}
 	}
 #pragma endregion
-	f.close();
 
 	// Write file entries for directories
 
