@@ -8,7 +8,8 @@ struct FileTree;
 struct FileTreeNode {
 	FileTree* next;
 	File* file;
-	FileTreeNode(FileTree* next, File* file) : next(next), file(file) {}
+	int depth;
+	FileTreeNode(FileTree* next, File* file) : next(next), file(file), depth(0) {}
 };
 
 struct FileTree {
@@ -16,6 +17,7 @@ struct FileTree {
 
 	long get_dir_amount();
 	long get_file_amount();
+	long get_content_amount();
 	unsigned int get_files_size();
 
 private:

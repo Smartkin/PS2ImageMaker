@@ -5,7 +5,7 @@
 #include "File.h"
 #include "API.h"
 
-void enumerate_files_recursively(FileTree* ft, std::string path);
+void enumerate_files_recursively(FileTree* ft, std::string path, int depth = 0);
 void update_progress_message(Progress* pr, const char* message);
 
 Directory::Directory(const char* path) : path(path) {}
@@ -28,7 +28,7 @@ FileTree* Directory::get_files(Progress* pr) {
 	}
 }
 
-void enumerate_files_recursively(FileTree* ft, std::string path) {
+void enumerate_files_recursively(FileTree* ft, std::string path, int depth) {
 	WIN32_FIND_DATAA file_info;
 	auto find_handle = FindFirstFileA(path.c_str(), &file_info);
 	if (find_handle != INVALID_HANDLE_VALUE) {
@@ -43,10 +43,11 @@ void enumerate_files_recursively(FileTree* ft, std::string path) {
 			auto file = new File(file_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY, file_info.nFileSizeLow,
 				pth.c_str(), "", file_info.cFileName);
 			auto node = new FileTreeNode(nullptr, file);
+			node->depth = depth;
 			if (file->IsDirectory()) {
 				node->next = new FileTree();
 				auto str = file->GetPath().append("/*");
-				enumerate_files_recursively(node->next, str);
+				enumerate_files_recursively(node->next, str, depth + 1);
 			}
 			ft->tree.push_back(node);
 		} while (FindNextFileA(find_handle, &file_info));
@@ -78,6 +79,11 @@ long FileTree::get_file_amount()
 		}
 	}
 	return amount;
+}
+
+long FileTree::get_content_amount()
+{
+	return this->tree.size();
 }
 
 unsigned int FileTree::get_files_size()

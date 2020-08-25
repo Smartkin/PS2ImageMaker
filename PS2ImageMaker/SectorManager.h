@@ -1,7 +1,10 @@
 #pragma once
 #include <fstream>
 #include <exception>
+#include <vector>
+#include <map>
 struct FileTree;
+struct FileTreeNode;
 
 class SectorManager
 {
@@ -18,14 +21,21 @@ public:
 	unsigned int get_partition_start_sector();
 	long get_total_files();
 	long get_total_directories();
+	unsigned int get_file_sector(FileTreeNode* node);
+	std::vector<FileTreeNode*> get_directories();
+
+private:
+	void _fill_file_sectors(FileTree* ft, bool root);
 
 private:
 	long current_sector;
 	long data_sector; // Sector where data starts residing
-	long directories;
+	long directories_amount;
 	long files;
 	unsigned int total_sectors;
 	unsigned int partition_start_sector;
+	std::vector<std::pair<FileTreeNode*, unsigned int>> file_sectors;
+	std::vector<FileTreeNode*> directories;
 };
 
 template<typename T>
@@ -37,6 +47,7 @@ inline void SectorManager::write_sector(std::ofstream& f, T* data, int size)
 	
 	// Write the data
 	f.write(reinterpret_cast<char*>(data), size);
+
 
 	pad_sector(f, 2048 - size);
 	current_sector++;

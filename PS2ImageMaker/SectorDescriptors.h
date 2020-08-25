@@ -17,8 +17,8 @@ struct DirectoryRecord {
 	int data_len_msb;
 	char red_date_and_time[7]; // Recorded as yy/mm/dd hh:mm:ss GMT offset in 15 minutes interval
 	char flags;
-	char file_size_in_inter; // Ugh, will probably just write 0 nobody cares about interleave mode anyway
-	char interleave_gap; // Same
+	char file_size_in_inter = '\0'; // Ugh, will probably just write 0 nobody cares about interleave mode anyway
+	char interleave_gap = '\0'; // Same
 	short vol_seq_num_lsb; // Written in both endians
 	short vol_seq_num_msb;
 	char file_ident_len;
