@@ -31,6 +31,7 @@ public:
 	unsigned int get_file_lba(FileTreeNode* node);
 	unsigned int get_file_local_sector(FileTreeNode* node);
 	std::vector<FileTreeNode*> get_directories();
+	std::vector<FileTreeNode*> get_files();
 
 private:
 	void _fill_file_sectors(FileTree* ft, bool root);
@@ -39,11 +40,12 @@ private:
 	long current_sector;
 	long data_sector; // Sector where data starts residing
 	long directories_amount;
-	long files;
+	long files_amount;
 	unsigned int total_sectors;
 	unsigned int partition_start_sector;
 	std::vector<std::pair<FileTreeNode*, FileLocation>> file_sectors;
 	std::vector<FileTreeNode*> directories;
+	std::vector<FileTreeNode*> files;
 };
 
 template<typename T>
