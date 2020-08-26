@@ -93,6 +93,14 @@ unsigned int SectorManager::get_file_lba(FileTreeNode* node)
 	return (*vec_iter).second.lba;
 }
 
+unsigned int SectorManager::get_file_local_sector(FileTreeNode* node)
+{
+	auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
+		return p.first == node;
+	});
+	return (*vec_iter).second.local_sector;
+}
+
 std::vector<FileTreeNode*> SectorManager::get_directories()
 {
 	return directories;

@@ -29,6 +29,7 @@ public:
 	long get_total_directories();
 	unsigned int get_file_sector(FileTreeNode* node);
 	unsigned int get_file_lba(FileTreeNode* node);
+	unsigned int get_file_local_sector(FileTreeNode* node);
 	std::vector<FileTreeNode*> get_directories();
 
 private:

@@ -21,6 +21,16 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
 unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 template<typename T>
 void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
+struct ImageContext {
+	Timestamp twins_creation_time;
+	char dvd_gen[18] = "DVD-ROM GENERATOR";
+	char udf_free_ea[17] = "*UDF FreeEASpace";
+	char udf_cgms_info[19] = "*UDF DVD CGMS Info";
+	char id_suff[3] = { 0x2, 0x1, 0x3 };
+	char iuea_free_impl[4] = { 0x61, 0x5, 0x0, 0x0 };
+	char iuea_cgms_impl[8] = { 0x49, 0x5, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
+};
+void fill_file_fe(std::ofstream& f, SectorManager& sm, FileTree* ft, ulong& unique_id, ushort& cur_spec_lba, ImageContext& context);
 
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
@@ -1016,8 +1026,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 #pragma endregion
 
 	// Write file entries for files
-
-
+	auto im_cxt = ImageContext();
+	fill_file_fe(f, sm, ft, unique_id, cur_spec_lba, im_cxt);
 	update_progress_message(pr, "Finished writing sectors");
 	write_file_tree(pr, sm, f, ft);
 }
@@ -1212,6 +1222,78 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 	// At the moment the only buffer we can free because it's copied everywhere necessary and not needed anymore
 	delete[] f_name_buf;
 	return struct_size;
+}
+
+// Helper function for writing File Entries for files recursively
+void fill_file_fe(std::ofstream& f, SectorManager& sm, FileTree* ft, ulong& unique_id, ushort& cur_spec_lba, ImageContext& context)
+{
+	for (auto file : ft->tree) {
+		if (file->file->IsDirectory()) {
+			fill_file_fe(f, sm, file->next, unique_id, cur_spec_lba, context);
+			continue;
+		}
+		FileEntry fe;
+		DescriptorTag& fe_tag = fe.tag;
+		fe_tag.tag_ident = 0x105;
+		fe_tag.desc_version = 2;
+		fe_tag.desc_crc_len = 0x12C;
+		fe_tag.tag_location = cur_spec_lba;
+		ICBTag& fe_icb = fe.icb_tag;
+		fe_icb.prior_rec_num_of_direct_entries = 0;
+		fe_icb.strategy_type = 4;
+		pad_string((char*)fe_icb.strat_param, 0, 2, '\0');
+		fe_icb.num_of_entries = 1;
+		fe_icb.file_type = 4;
+		fe_icb.parent_icb_loc.log_block_num = 0;
+		fe_icb.parent_icb_loc.part_ref_num = 0;
+		fe_icb.flags = 0x630;
+		fe.uid = -1;
+		fe.gid = -1;
+		fe.permissions = 0x14A5;
+		fe.file_link_cnt = 1; // Always 1 for files
+		fe.record_format = 0;
+		fe.record_disp_attrib = 0;
+		fe.record_len = 0;
+		fe.info_len = file->file->GetSize();
+		fe.log_blocks_rec = 1;
+		fe.access_time = context.twins_creation_time;
+		fe.mod_time = context.twins_creation_time;
+		fe.attrib_time = context.twins_creation_time;
+		fe.checkpoint = 1;
+		fe.ext_attrib_icb.extent_len = 0;
+		fe.ext_attrib_icb.extent_loc.log_block_num = 0;
+		fe.ext_attrib_icb.extent_loc.part_ref_num = 0;
+		pad_string((char*)fe.ext_attrib_icb.impl_use, 0, 6, '\0');
+		fe.impl_ident.flags = 0;
+		strncpy(fe.impl_ident.ident, context.dvd_gen, strlen(context.dvd_gen));
+		pad_string(fe.impl_ident.ident, strlen(context.dvd_gen), 23, '\0');
+		pad_string(fe.impl_ident.ident_suffix, 0, 8, '\0');
+		fe.unique_id = unique_id; // 0 for root, rest start from 0x10 and count up
+		EA_HeaderDescriptor& ea = fe.ext_attrib_hd;
+		ea.tag.tag_ident = 0x106;
+		ea.tag.desc_version = 2;
+		ea.tag.desc_crc_len = 8;
+		ea.tag.tag_location = cur_spec_lba;
+		fill_tag_checksum(ea.tag, &ea);
+		fe.iuea_udf_free.impl_ident.flags = 0;
+		strncpy((char*)fe.iuea_udf_free.impl_ident.ident, context.udf_free_ea, strlen(context.udf_free_ea));
+		pad_string((char*)fe.iuea_udf_free.impl_ident.ident, strlen(context.udf_free_ea), 23, '\0');
+		strncpy((char*)fe.iuea_udf_free.impl_ident.ident_suffix, context.id_suff, 2);
+		pad_string((char*)fe.iuea_udf_free.impl_ident.ident_suffix, 2, 8, '\0');
+		strncpy((char*)fe.iuea_udf_free.impl_use, context.iuea_free_impl, 4);
+		fe.iuea_udf_cgms.impl_ident.flags = 0;
+		strncpy((char*)fe.iuea_udf_cgms.impl_ident.ident, context.udf_cgms_info, strlen(context.udf_cgms_info));
+		pad_string((char*)fe.iuea_udf_cgms.impl_ident.ident, strlen(context.udf_cgms_info), 23, '\0');
+		strncpy((char*)fe.iuea_udf_cgms.impl_ident.ident_suffix, context.id_suff, 2);
+		pad_string((char*)fe.iuea_udf_cgms.impl_ident.ident_suffix, 2, 8, '\0');
+		strncpy((char*)fe.iuea_udf_cgms.impl_use, context.iuea_cgms_impl, 8);
+		fe.alloc_desc.info_len = fe.info_len; // Size of file identifier descriptor for folders, size of file for files
+		fe.alloc_desc.log_block_num = sm.get_file_local_sector(file); // Always 2 for root, local sector for files
+		fill_tag_checksum(fe_tag, &fe);
+		sm.write_sector<FileEntry>(f, &fe);
+		cur_spec_lba++;
+		unique_id++;
+	}
 }
 
 template<typename T>
