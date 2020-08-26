@@ -116,6 +116,7 @@ void SectorManager::_fill_file_sectors(FileTree* ft, bool root)
 	unsigned int dir_lba = 8;
 	unsigned int data_sec = data_sector;
 	unsigned int data_lba = 6 + this->directories_amount;
+	unsigned int file_local_sector = data_sector - 261 - this->directories_amount;
 	for (auto& file_sector : file_sectors) {
 		// If it's a directory use directory records sectors
 		if (file_sector.first->file->IsDirectory()) {
@@ -125,7 +126,10 @@ void SectorManager::_fill_file_sectors(FileTree* ft, bool root)
 		else {
 			file_sector.second.global_sector = data_sec;
 			file_sector.second.lba = data_lba++;
-			data_sec += file_sector.first->file->GetSize() / 2048 + (file_sector.first->file->GetSize() % 2048 == 0 ? 0 : 1);
+			file_sector.second.local_sector = file_local_sector;
+			auto sector_space = file_sector.first->file->GetSize() / 2048 + (file_sector.first->file->GetSize() % 2048 == 0 ? 0 : 1);
+			data_sec += sector_space;
+			file_local_sector += sector_space;
 		}
 	}
 }

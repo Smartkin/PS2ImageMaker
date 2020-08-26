@@ -8,6 +8,7 @@ struct FileTreeNode;
 
 struct FileLocation {
 	unsigned int global_sector; // starting from the top of the disc
+	unsigned int local_sector; // specific to files which is their global sector - sector number of the FileSetDescriptor
 	unsigned int lba; // starting from FileIdentifierDescriptor sector
 };
 
@@ -18,7 +19,7 @@ public:
 	SectorManager(FileTree* ft);
 
 	template<typename T>
-	void write_sector(std::ofstream& f, T* data, int size);
+	void write_sector(std::ofstream& f, T* data, unsigned int size = sizeof(T));
 	void write_file(std::ofstream& f, std::filebuf* buf, long file_size);
 	void pad_sector(std::ofstream& f, int padding_size);
 	unsigned int get_total_sectors();
@@ -45,7 +46,7 @@ private:
 };
 
 template<typename T>
-inline void SectorManager::write_sector(std::ofstream& f, T* data, int size)
+inline void SectorManager::write_sector(std::ofstream& f, T* data, unsigned int size)
 {
 	if (size > 2048) {
 		throw std::exception("Can't write to sector more than sector's size");

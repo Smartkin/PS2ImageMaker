@@ -19,6 +19,8 @@ unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
 unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
+template<typename T>
+void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
 
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
@@ -200,6 +202,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	auto dvd_gen = "DVD-ROM GENERATOR";
 	auto udf_lv_info = "*UDF LV Info";
 	auto osta_complient = "*OSTA UDF Compliant";
+	auto udf_free_ea = "*UDF FreeEASpace";
+	auto udf_cgms_info = "*UDF DVD CGMS Info";
 	char compID = 0x8; // Compression ID of 8
 	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
 	char id_suff[3] = { 0x2, 0x1, 0x3 };
@@ -879,6 +883,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	}
 #pragma endregion
 
+	char iuea_free_impl[4] = { 0x61, 0x5, 0x0, 0x0 };
+	char iuea_cgms_impl[8] = { 0x49, 0x5, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
 	// Write file entries for directories
 #pragma region FileEntries(Directories) writing
 	FileEntry root_fe;
@@ -918,7 +924,30 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	pad_string(root_fe.impl_ident.ident, strlen(dvd_gen), 23, '\0');
 	pad_string(root_fe.impl_ident.ident_suffix, 0, 8, '\0');
 	root_fe.unique_id = 0; // Only for root, rest start from 0x10
+	EA_HeaderDescriptor& ea = root_fe.ext_attrib_hd;
+	ea.tag.tag_ident = 0x106;
+	ea.tag.desc_version = 2;
+	ea.tag.desc_crc_len = 8;
+	ea.tag.tag_location = cur_spec_lba;
+	fill_tag_checksum(ea.tag, &ea);
+	root_fe.iuea_udf_free.impl_ident.flags = 0;
+	strncpy((char*)root_fe.iuea_udf_free.impl_ident.ident, udf_free_ea, strlen(udf_free_ea));
+	pad_string((char*)root_fe.iuea_udf_free.impl_ident.ident, strlen(udf_free_ea), 23, '\0');
+	strncpy((char*)root_fe.iuea_udf_free.impl_ident.ident_suffix, id_suff, 2);
+	pad_string((char*)root_fe.iuea_udf_free.impl_ident.ident_suffix, 2, 8, '\0');
+	strncpy((char*)root_fe.iuea_udf_free.impl_use, iuea_free_impl, 4);
+	root_fe.iuea_udf_cgms.impl_ident.flags = 0;
+	strncpy((char*)root_fe.iuea_udf_cgms.impl_ident.ident, udf_cgms_info, strlen(udf_cgms_info));
+	pad_string((char*)root_fe.iuea_udf_cgms.impl_ident.ident, strlen(udf_cgms_info), 23, '\0');
+	strncpy((char*)root_fe.iuea_udf_cgms.impl_ident.ident_suffix, id_suff, 2);
+	pad_string((char*)root_fe.iuea_udf_cgms.impl_ident.ident_suffix, 2, 8, '\0');
+	strncpy((char*)root_fe.iuea_udf_cgms.impl_use, iuea_cgms_impl, 8);
+	root_fe.alloc_desc.info_len = root_fe.info_len;
+	root_fe.alloc_desc.log_block_num = 2; // Always 2 for root, local sector for files
+	fill_tag_checksum(fe_tag, &root_fe);
+	sm.write_sector<FileEntry>(f, &root_fe);
 	auto dirs = sm.get_directories();
+	ulong unique_id = 0x10;
 	for (auto dir : dirs) {
 
 	}
@@ -1121,4 +1150,14 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 	// At the moment the only buffer we can free because it's copied everywhere necessary and not needed anymore
 	delete[] f_name_buf;
 	return struct_size;
+}
+
+template<typename T>
+void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size)
+{
+	auto checksum = cksum(((unsigned char*)buffer) + sizeof(DescriptorTag), size - sizeof(DescriptorTag));
+	tag.desc_crc = checksum;
+	tag.tag_checksum = 0;
+	auto tag_cksum = cksum_tag((unsigned char*)&tag, sizeof(DescriptorTag));
+	tag.tag_checksum = tag_cksum;
 }

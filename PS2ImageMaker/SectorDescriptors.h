@@ -1,11 +1,13 @@
 #pragma once
+#include <stdint.h>
 // Definition of all the descriptors used in a PS2 disc
 // Laid out just like it would on a disc with supplimentary structs sprinkled in
 #pragma pack(1) // We really need that 1 byte alignment :P
 // Typedefs for UDF stuff
-typedef unsigned short ushort;
-typedef unsigned int uint;
-typedef unsigned long ulong;
+
+typedef uint16_t ushort;
+typedef uint32_t uint;
+typedef uint64_t ulong;
 typedef unsigned char byte;
 
 struct DirectoryRecord {
@@ -326,20 +328,25 @@ struct ICBTag {
 
 struct EA_HeaderDescriptor {
 	DescriptorTag tag;
-	uint impl_attrib_loc;
-	uint app_attrib_loc;
+	uint impl_attrib_loc = 0x18;
+	uint app_attrib_loc = 0x84;
 };
 
 // When for once C++ metaprogramming is actually useful
-template<int impl_use_size>
+template<uint attrib_len_t, uint impl_use_len_t>
 struct ImplUseExtAttrib {
 	uint attrib_type = 0x800;
 	byte attrib_subtype = 0x1;
 	byte reserved[3] = { '\0', '\0', '\0' };
-	uint attrib_len;
-	uint impl_use_len = impl_use_size;
+	uint attrib_len = attrib_len_t;
+	uint impl_use_len = impl_use_len_t;
 	EntityID impl_ident;
-	byte impl_use[impl_use_size];
+	byte impl_use[impl_use_len_t];
+};
+
+struct AllocDescriptor {
+	uint info_len;
+	uint log_block_num;
 };
 
 struct FileEntry {
@@ -364,9 +371,9 @@ struct FileEntry {
 	uint len_of_ext_attrib = 132;
 	uint len_of_alloc_desc = 8;
 	EA_HeaderDescriptor ext_attrib_hd;
-	ImplUseExtAttrib<4> iuea_udf_free;
-	ImplUseExtAttrib<8> iuea_udf_cgms;
-	byte alloc_desc[8];
+	ImplUseExtAttrib<52, 4> iuea_udf_free;
+	ImplUseExtAttrib<56, 8> iuea_udf_cgms;
+	AllocDescriptor alloc_desc;
 };
 
 #pragma pack()
