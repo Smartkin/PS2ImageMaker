@@ -18,7 +18,7 @@ void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f, FileTree
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
-unsigned int fill_fdi(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
+unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
@@ -203,6 +203,17 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	char compID = 0x8; // Compression ID of 8
 	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
 	char id_suff[3] = { 0x2, 0x1, 0x3 };
+	Timestamp twins_creation_time; // Just use date and time whenever Twinsanity PAL was released
+	twins_creation_time.microseconds = 0;
+	twins_creation_time.milliseconds = 0;
+	twins_creation_time.centiseconds = 0;
+	twins_creation_time.second = 47;
+	twins_creation_time.minute = 33;
+	twins_creation_time.hour = 7;
+	twins_creation_time.day = 3;
+	twins_creation_time.month = 9;
+	twins_creation_time.year = 2004;
+	twins_creation_time.type_and_timezone = 0x121C;
 	// Write twice the same descriptors for Main and RSRV
 	for (int i = 0; i < 2; ++i) {
 		ushort cur_tag_ident = 1;
@@ -249,18 +260,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		strncpy(pvd.app_ident.ident, sys_ident, strlen(sys_ident));
 		pad_string(pvd.app_ident.ident, strlen(sys_ident), 23);
 		pad_string(pvd.app_ident.ident_suffix, 0, 8, '\0');
-		// Just record date and time whenever Twinsanity PAL was released
-		pvd.rec_date_and_time.microseconds = 0;
-		pvd.rec_date_and_time.milliseconds = 0;
-		pvd.rec_date_and_time.centiseconds = 0;
-		pvd.rec_date_and_time.second = 47;
-		pvd.rec_date_and_time.minute = 33;
-		pvd.rec_date_and_time.hour = 7;
-		pvd.rec_date_and_time.day = 3;
-		pvd.rec_date_and_time.month = 9;
-		pvd.rec_date_and_time.year = 2004;
-		pvd.rec_date_and_time.type_and_timezone = 0x121C;
-		pvd.impl_ident.flags = 0;
+		pvd.rec_date_and_time = twins_creation_time;
 		strncpy(pvd.impl_ident.ident, dvd_gen, strlen(dvd_gen));
 		pad_string(pvd.impl_ident.ident, strlen(dvd_gen), 23, '\0');
 		pad_string(pvd.impl_ident.ident_suffix, 0, 8, '\0');
@@ -456,17 +456,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	lvi_tag.desc_crc_len = 2032;
 	lvi_tag.tag_location = sm.get_current_sector();
 	// Tag checksum and its desc crc fields are written after descriptor has been filled
-	// Just record date and time whenever Twinsanity PAL was released
-	lvi.rec_date_and_time.microseconds = 0;
-	lvi.rec_date_and_time.milliseconds = 0;
-	lvi.rec_date_and_time.centiseconds = 0;
-	lvi.rec_date_and_time.second = 47;
-	lvi.rec_date_and_time.minute = 33;
-	lvi.rec_date_and_time.hour = 7;
-	lvi.rec_date_and_time.day = 3;
-	lvi.rec_date_and_time.month = 9;
-	lvi.rec_date_and_time.year = 2004;
-	lvi.rec_date_and_time.type_and_timezone = 0x121C;
+	lvi.rec_date_and_time = twins_creation_time;
 	lvi.integ_type = 1;
 	lvi.next_integ_extent.length = 0;
 	lvi.next_integ_extent.location = 0;
@@ -755,16 +745,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	fs_tag.desc_crc_len = 2032;
 	fs_tag.tag_location = sm.get_current_sector();
 	// Tag checksum and its desc crc fields are written after descriptor has been filled
-	fs.rec_date_and_time.microseconds = 0;
-	fs.rec_date_and_time.milliseconds = 0;
-	fs.rec_date_and_time.centiseconds = 0;
-	fs.rec_date_and_time.second = 47;
-	fs.rec_date_and_time.minute = 33;
-	fs.rec_date_and_time.hour = 7;
-	fs.rec_date_and_time.day = 3;
-	fs.rec_date_and_time.month = 9;
-	fs.rec_date_and_time.year = 2004;
-	fs.rec_date_and_time.type_and_timezone = 0x121C;
+	fs.rec_date_and_time = twins_creation_time;
 	fs.inter_level = 3;
 	fs.max_inter_level = 3;
 	fs.char_set_list = 1;
@@ -819,6 +800,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	ushort cur_spec_lba = 2;
 
 	// Write file identifier descriptor
+	std::map<FileTree*, unsigned int> dir_file_ident_size_map; // Used for directory entries
 #pragma region FileIdentifierDescriptors writing
 	FileIdentifierDescriptor fi_root;
 	DescriptorTag& fi_root_tag = fi_root.tag;
@@ -859,7 +841,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		// Write folders first and files later
 		for (auto node : cur_tree->tree) {
 			if (node->file->IsDirectory()) {
-				needed_memory += fill_fdi(sm, file_idents[index++], node, cur_spec_lba, buffers);
+				needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
 			}
 			else {
 				files.push_back(node);
@@ -868,7 +850,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 		// Fill in the files
 		for (auto file : files) {
-			needed_memory += fill_fdi(sm, file_idents[index++], file, cur_spec_lba, buffers);
+			needed_memory += fill_fid(sm, file_idents[index++], file, cur_spec_lba, buffers);
 		}
 
 		// Write the data to the sector
@@ -884,6 +866,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		if (needed_memory - offset > 0) {
 			memset(buffer + offset, 0, needed_memory - offset);
 		}
+		dir_file_ident_size_map.emplace(std::pair<FileTree*, unsigned int>(cur_tree, needed_memory));
 		sm.write_sector<char>(f, buffer, needed_memory);
 		free(buffer);
 
@@ -897,6 +880,49 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 #pragma endregion
 
 	// Write file entries for directories
+#pragma region FileEntries(Directories) writing
+	FileEntry root_fe;
+	DescriptorTag& fe_tag = root_fe.tag;
+	fe_tag.tag_ident = 0x105;
+	fe_tag.desc_version = 2;
+	fe_tag.desc_crc_len = 0x12C;
+	fe_tag.tag_location = cur_spec_lba;
+	ICBTag& fe_icb = root_fe.icb_tag;
+	fe_icb.prior_rec_num_of_direct_entries = 0;
+	fe_icb.strategy_type = 4;
+	pad_string((char*)fe_icb.strat_param, 0, 2, '\0');
+	fe_icb.num_of_entries = 1;
+	fe_icb.file_type = 4;
+	fe_icb.parent_icb_loc.log_block_num = 0;
+	fe_icb.parent_icb_loc.part_ref_num = 0;
+	fe_icb.flags = 0x630;
+	root_fe.uid = -1;
+	root_fe.gid = -1;
+	root_fe.permissions = 0x14A5;
+	root_fe.file_link_cnt = ft->get_dir_links();
+	root_fe.record_format = 0;
+	root_fe.record_disp_attrib = 0;
+	root_fe.record_len = 0;
+	root_fe.info_len = dir_file_ident_size_map.at(ft);
+	root_fe.log_blocks_rec = 1;
+	root_fe.access_time = twins_creation_time;
+	root_fe.mod_time = twins_creation_time;
+	root_fe.attrib_time = twins_creation_time;
+	root_fe.checkpoint = 1;
+	root_fe.ext_attrib_icb.extent_len = 0;
+	root_fe.ext_attrib_icb.extent_loc.log_block_num = 0;
+	root_fe.ext_attrib_icb.extent_loc.part_ref_num = 0;
+	pad_string((char*)root_fe.ext_attrib_icb.impl_use, 0, 6, '\0');
+	root_fe.impl_ident.flags = 0;
+	strncpy(root_fe.impl_ident.ident, dvd_gen, strlen(dvd_gen));
+	pad_string(root_fe.impl_ident.ident, strlen(dvd_gen), 23, '\0');
+	pad_string(root_fe.impl_ident.ident_suffix, 0, 8, '\0');
+	root_fe.unique_id = 0; // Only for root, rest start from 0x10
+	auto dirs = sm.get_directories();
+	for (auto dir : dirs) {
+
+	}
+#pragma endregion
 
 	// Write file entries for files
 
@@ -1051,7 +1077,8 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 	}
 }
 
-unsigned int fill_fdi(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers) {
+// Helper function to fill FileIdentifierDescriptor struct
+unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers) {
 	DescriptorTag& tag = fi.tag;
 	auto file_name_size = node->file->GetName().size();
 	auto file_str_len = file_name_size * 2 + 1; // 1 additional byte for unicode compression id

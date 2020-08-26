@@ -9,8 +9,9 @@ struct FileTreeNode {
 	FileTree* next;
 	File* file;
 	FileTreeNode* parent;
+	int links; // Amount of links to another directories
 	int depth;
-	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0) {}
+	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0), links(1) {}
 };
 
 struct FileTree {
@@ -19,6 +20,7 @@ struct FileTree {
 	long get_dir_amount();
 	long get_file_amount();
 	long get_content_amount();
+	long get_dir_links();
 	unsigned int get_files_size();
 
 private:

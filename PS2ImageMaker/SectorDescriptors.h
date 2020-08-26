@@ -318,10 +318,28 @@ struct ICBTag {
 	ushort strategy_type;
 	byte strat_param[2];
 	ushort num_of_entries;
-	byte reserved;
+	byte reserved = '\0';
 	byte file_type;
 	LbPointer parent_icb_loc;
 	ushort flags;
+};
+
+struct EA_HeaderDescriptor {
+	DescriptorTag tag;
+	uint impl_attrib_loc;
+	uint app_attrib_loc;
+};
+
+// When for once C++ metaprogramming is actually useful
+template<int impl_use_size>
+struct ImplUseExtAttrib {
+	uint attrib_type = 0x800;
+	byte attrib_subtype = 0x1;
+	byte reserved[3] = { '\0', '\0', '\0' };
+	uint attrib_len;
+	uint impl_use_len = impl_use_size;
+	EntityID impl_ident;
+	byte impl_use[impl_use_size];
 };
 
 struct FileEntry {
@@ -343,10 +361,12 @@ struct FileEntry {
 	LongAllocDescriptor ext_attrib_icb;
 	EntityID impl_ident;
 	ulong unique_id;
-	uint len_of_ext_attrib;
-	uint len_of_alloc_desc;
-	byte ext_attrib;
-	byte alloc_desc;
+	uint len_of_ext_attrib = 132;
+	uint len_of_alloc_desc = 8;
+	EA_HeaderDescriptor ext_attrib_hd;
+	ImplUseExtAttrib<4> iuea_udf_free;
+	ImplUseExtAttrib<8> iuea_udf_cgms;
+	byte alloc_desc[8];
 };
 
 #pragma pack()

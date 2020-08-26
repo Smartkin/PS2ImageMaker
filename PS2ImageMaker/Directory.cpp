@@ -45,6 +45,7 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 			auto node = new FileTreeNode(nullptr, parent, file);
 			node->depth = depth;
 			if (file->IsDirectory()) {
+				
 				node->next = new FileTree();
 				auto str = file->GetPath().append("/*");
 				enumerate_files_recursively(node->next, node, str, depth + 1);
@@ -84,6 +85,15 @@ long FileTree::get_file_amount()
 long FileTree::get_content_amount()
 {
 	return this->tree.size();
+}
+
+long FileTree::get_dir_links()
+{
+	long amount = 1;
+	for (auto node : this->tree) {
+		amount += node->file->IsDirectory();
+	}
+	return amount;
 }
 
 unsigned int FileTree::get_files_size()
