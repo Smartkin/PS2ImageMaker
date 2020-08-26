@@ -872,13 +872,13 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		}
 		dir_file_ident_size_map.emplace(std::pair<FileTree*, unsigned int>(cur_tree, needed_memory));
 		sm.write_sector<char>(f, buffer, needed_memory);
+		cur_spec_lba++;
 		free(buffer);
 
 		// Update current tree
 		if (i != directories - 1) {
 			cur_dir = sm.get_directories()[i];
 			cur_tree = cur_dir->next;
-			cur_spec_lba++;
 		}
 	}
 #pragma endregion
@@ -942,14 +942,76 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	strncpy((char*)root_fe.iuea_udf_cgms.impl_ident.ident_suffix, id_suff, 2);
 	pad_string((char*)root_fe.iuea_udf_cgms.impl_ident.ident_suffix, 2, 8, '\0');
 	strncpy((char*)root_fe.iuea_udf_cgms.impl_use, iuea_cgms_impl, 8);
-	root_fe.alloc_desc.info_len = root_fe.info_len;
+	root_fe.alloc_desc.info_len = root_fe.info_len; // Size of file identifier descriptor for folders, size of file for files
 	root_fe.alloc_desc.log_block_num = 2; // Always 2 for root, local sector for files
 	fill_tag_checksum(fe_tag, &root_fe);
 	sm.write_sector<FileEntry>(f, &root_fe);
+	cur_spec_lba++;
 	auto dirs = sm.get_directories();
 	ulong unique_id = 0x10;
+	auto log_block_num = 3;
 	for (auto dir : dirs) {
-
+		FileEntry fe;
+		DescriptorTag& fe_tag = fe.tag;
+		fe_tag.tag_ident = 0x105;
+		fe_tag.desc_version = 2;
+		fe_tag.desc_crc_len = 0x12C;
+		fe_tag.tag_location = cur_spec_lba;
+		ICBTag& fe_icb = fe.icb_tag;
+		fe_icb.prior_rec_num_of_direct_entries = 0;
+		fe_icb.strategy_type = 4;
+		pad_string((char*)fe_icb.strat_param, 0, 2, '\0');
+		fe_icb.num_of_entries = 1;
+		fe_icb.file_type = 4;
+		fe_icb.parent_icb_loc.log_block_num = 0;
+		fe_icb.parent_icb_loc.part_ref_num = 0;
+		fe_icb.flags = 0x630;
+		fe.uid = -1;
+		fe.gid = -1;
+		fe.permissions = 0x14A5;
+		fe.file_link_cnt = dir->next->get_dir_links();
+		fe.record_format = 0;
+		fe.record_disp_attrib = 0;
+		fe.record_len = 0;
+		fe.info_len = dir_file_ident_size_map.at(dir->next);
+		fe.log_blocks_rec = 1;
+		fe.access_time = twins_creation_time;
+		fe.mod_time = twins_creation_time;
+		fe.attrib_time = twins_creation_time;
+		fe.checkpoint = 1;
+		fe.ext_attrib_icb.extent_len = 0;
+		fe.ext_attrib_icb.extent_loc.log_block_num = 0;
+		fe.ext_attrib_icb.extent_loc.part_ref_num = 0;
+		pad_string((char*)fe.ext_attrib_icb.impl_use, 0, 6, '\0');
+		fe.impl_ident.flags = 0;
+		strncpy(fe.impl_ident.ident, dvd_gen, strlen(dvd_gen));
+		pad_string(fe.impl_ident.ident, strlen(dvd_gen), 23, '\0');
+		pad_string(fe.impl_ident.ident_suffix, 0, 8, '\0');
+		fe.unique_id = unique_id; // 0 for root, rest start from 0x10 and count up
+		EA_HeaderDescriptor& ea = fe.ext_attrib_hd;
+		ea.tag.tag_ident = 0x106;
+		ea.tag.desc_version = 2;
+		ea.tag.desc_crc_len = 8;
+		ea.tag.tag_location = cur_spec_lba;
+		fill_tag_checksum(ea.tag, &ea);
+		fe.iuea_udf_free.impl_ident.flags = 0;
+		strncpy((char*)fe.iuea_udf_free.impl_ident.ident, udf_free_ea, strlen(udf_free_ea));
+		pad_string((char*)fe.iuea_udf_free.impl_ident.ident, strlen(udf_free_ea), 23, '\0');
+		strncpy((char*)fe.iuea_udf_free.impl_ident.ident_suffix, id_suff, 2);
+		pad_string((char*)fe.iuea_udf_free.impl_ident.ident_suffix, 2, 8, '\0');
+		strncpy((char*)fe.iuea_udf_free.impl_use, iuea_free_impl, 4);
+		fe.iuea_udf_cgms.impl_ident.flags = 0;
+		strncpy((char*)fe.iuea_udf_cgms.impl_ident.ident, udf_cgms_info, strlen(udf_cgms_info));
+		pad_string((char*)fe.iuea_udf_cgms.impl_ident.ident, strlen(udf_cgms_info), 23, '\0');
+		strncpy((char*)fe.iuea_udf_cgms.impl_ident.ident_suffix, id_suff, 2);
+		pad_string((char*)fe.iuea_udf_cgms.impl_ident.ident_suffix, 2, 8, '\0');
+		strncpy((char*)fe.iuea_udf_cgms.impl_use, iuea_cgms_impl, 8);
+		fe.alloc_desc.info_len = fe.info_len; // Size of file identifier descriptor for folders, size of file for files
+		fe.alloc_desc.log_block_num = log_block_num++; // Always 2 for root, local sector for files
+		fill_tag_checksum(fe_tag, &fe);
+		sm.write_sector<FileEntry>(f, &fe);
+		cur_spec_lba++;
+		unique_id++;
 	}
 #pragma endregion
 
