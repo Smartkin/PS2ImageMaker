@@ -1081,6 +1081,26 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 	update_progress_message(pr, "Finished writing sectors");
 	write_file_tree(pr, sm, f);
+
+	update_progress_message(pr, "Writing special sectors...");
+	// Write a special pad sector
+	auto pad_sec = '\0';
+	sm.write_sector(f, &pad_sec);
+
+	// Write a special end of session descriptor?
+	EndOfSessionDescriptor eos;
+	DescriptorTag& eos_tag = eos.tag;
+	eos_tag.tag_ident = 2;
+	eos_tag.desc_version = 2;
+	eos_tag.desc_crc_len = 2032;
+	eos_tag.tag_location = sm.get_total_sectors() - 1;
+	eos.alloc_desc1.info_len = 0x800;
+	eos.alloc_desc1.log_block_num = 0x20;
+	eos.alloc_desc2.info_len = 0x800;
+	eos.alloc_desc2.log_block_num = 0x30;
+	fill_tag_checksum(eos_tag, &eos);
+	sm.write_sector(f, &eos);
+	update_progress_message(pr, "Finished writing special sectors");
 }
 
 void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f) {

@@ -376,4 +376,12 @@ struct FileEntry {
 	AllocDescriptor alloc_desc;
 };
 
+// Then comes a pad sector
+
+struct EndOfSessionDescriptor {
+	DescriptorTag tag;
+	AllocDescriptor alloc_desc1;
+	AllocDescriptor alloc_desc2;
+};
+
 #pragma pack()

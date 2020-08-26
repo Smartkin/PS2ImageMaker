@@ -104,10 +104,20 @@ unsigned int FileTree::get_files_size()
 			_get_files_size(node, size);
 		}
 		else {
-			size += node->file->GetSize() + (2048 - node->file->GetSize() % 2048);
+			if (node->file->GetSize() % 2048 != 0) {
+				size += node->file->GetSize() + (2048 - node->file->GetSize() % 2048);
+			}
+			else {
+				size += node->file->GetSize();
+			}
 		}
 	}
-	return size + (2048 - size % 2048); // Align the size to the sectors
+	if (size % 2048 != 0) {
+		return size + (2048 - size % 2048); // Align the size to the sectors
+	}
+	else {
+		return size;
+	}
 }
 
 void FileTree::_get_dir_amount(FileTreeNode* node, long& amount)
@@ -139,7 +149,12 @@ void FileTree::_get_files_size(FileTreeNode* node, unsigned int& size)
 			_get_files_size(node, size);
 		}
 		else {
-			size += node->file->GetSize() + (2048 - node->file->GetSize() % 2048);
+			if (node->file->GetSize() % 2048 != 0) {
+				size += node->file->GetSize() + (2048 - node->file->GetSize() % 2048);
+			}
+			else {
+				size += node->file->GetSize();
+			}
 		}
 	}
 }
