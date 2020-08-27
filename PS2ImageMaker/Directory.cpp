@@ -6,12 +6,11 @@
 #include "API.h"
 
 void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string path, int depth = 0);
-void update_progress_message(Progress* pr, const char* message);
 
 Directory::Directory(const char* path) : path(path) {}
 
 
-FileTree* Directory::get_files(Progress* pr) {
+FileTree* Directory::get_files() {
 	WIN32_FIND_DATAA file_info;
 	FileTree* ft = new FileTree();
 	path.append("/*");
@@ -22,7 +21,6 @@ FileTree* Directory::get_files(Progress* pr) {
 		return ft;
 	}
 	else { // No files or directories found
-		update_progress_message(pr, "No files found");
 		return nullptr;
 	}
 }

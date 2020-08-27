@@ -7,16 +7,21 @@
 #include "Util.h"
 #include <vector>
 #include <thread>
+#include <mutex>
 #include <fstream>
 #include <algorithm>
 #include <map>
 #include <cassert>
 
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
+std::mutex progress_mut;
+Progress program_progress;
+Progress progress_copy;
+bool progress_dirty;
 
-void pack(Progress* pr, const char* game_path, const char* dest_path);
-void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft);
-void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f);
+void pack(const char* game_path, const char* dest_path);
+void write_sectors(std::ofstream& f, FileTree* ft);
+void write_file_tree(SectorManager& sm, std::ofstream& f);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
@@ -24,7 +29,7 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 template<typename T>
 void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
 
-// Helper struct to pass to the fill file function
+// Helper struct to pass to the fill file entry function
 struct ImageContext {
 	Timestamp twins_creation_time;
 	char dvd_gen[18] = "DVD-ROM GENERATOR";
@@ -37,33 +42,40 @@ struct ImageContext {
 void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
 
 // Launch the thread to pack
-extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
-	Progress* pr = new Progress();
-	std::thread* thr = new std::thread(pack, pr, game_path, dest_path);
-	return pr;
+extern "C" Progress& start_packing(const char* game_path, const char* dest_path) {
+	std::thread* thr = new std::thread(pack, game_path, dest_path);
+	return progress_copy;
+}
+
+extern "C" Progress& poll_progress() {
+	std::lock_guard<std::mutex> guard(progress_mut);
+	if (progress_dirty) {
+		progress_copy = program_progress;
+		progress_dirty = false;
+	}
+	return progress_copy;
 }
 
 // Start the packing
-void pack(Progress* pr, const char* game_path, const char* dest_path) {
+void pack(const char* game_path, const char* dest_path) {
 	Directory dir(game_path);
-	update_progress_message(pr, "Enumerating files...");
-	FileTree* ft = dir.get_files(pr);
+	update_progress(ProgressState::ENUM_FILES, 0);
+	FileTree* ft = dir.get_files();
 	if (ft == nullptr) { // No file tree was built
-		pr->progress = 1.0;
+		update_progress(ProgressState::FAILED, 1.0, "", true);
 		return;
 	}
-	update_progress_message(pr, "Finished enumerating files");
+	update_progress(ProgressState::WRITE_SECTORS, 0.1);
 	std::ofstream image;
 	image.open(dest_path, std::ios_base::binary | std::ios_base::out);
-	write_sectors(pr, image, ft);
-	pr->progress = 1.0;
+	write_sectors(image, ft);
+	update_progress(ProgressState::FINISHED, 1.0, "", true);
 }
 
-// All the writing for each sector is packed into this single function instead of having each sector to be in its separate function
+// All the writing for each sector is packed into this single function(for the most part) instead of having each sector to be in its separate function
 // biggest reason is because all sectors need a very strict ordering so instead of creating a seperate function for each
-// they are just divided into section, additionally certain sector's data can depend on others
-void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
-	update_progress_message(pr, "Writing sectors...");
+// they are just divided into regions, additionally certain sector's data can depend on others
+void write_sectors(std::ofstream& f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
 	auto sys_ident = "PLAYSTATION";
@@ -1029,10 +1041,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	im_cxt.twins_creation_time = twins_creation_time;
 	fill_file_fe(f, sm, unique_id, cur_spec_lba, im_cxt);
 
-	update_progress_message(pr, "Finished writing sectors");
-	write_file_tree(pr, sm, f);
+	write_file_tree(sm, f);
 	
-	update_progress_message(pr, "Writing special sectors...");
+	update_progress(ProgressState::WRITE_END, program_progress.progress);
 	// Write special pad sectors
 	auto pad_sec = '\0';
 	auto pad_secs = sm.get_pad_sectors();
@@ -1053,26 +1064,41 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	eos.alloc_desc2.log_block_num = 0x30;
 	fill_tag_checksum(eos_tag, &eos);
 	sm.write_sector(f, &eos);
-	update_progress_message(pr, "Finished writing special sectors");
 }
 
-void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f) {
+void write_file_tree(SectorManager& sm, std::ofstream& f) {
 	auto files = sm.get_files();
+	auto progress_increment = 0.8 / sm.get_total_files();
 	for (auto node : files) {
-		update_progress_message(pr, "Writing file...");
+		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
 		std::ifstream in_f;
 		in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
 		sm.write_file(f, in_f.rdbuf(), node->file->GetSize());
 	}
 }
 
-void update_progress_message(Progress* pr, const char* message) {
-	auto msg = message;
-	pr->message.size = strlen(msg);
-	pr->message.str[pr->message.size] = '\0';
-	strncpy(pr->message.str, msg, pr->message.size);
-	pr->message.size += 1;
-	pr->new_message = true;
+void update_progress(ProgressState state, float progress, const char* file_name, bool finished) {
+	std::lock_guard<std::mutex> guard(progress_mut);
+	program_progress.new_file = false;
+	program_progress.new_state = false;
+	progress_dirty = true;
+	if (state != program_progress.state) {
+		program_progress.state = state;
+		program_progress.new_state = true;
+	}
+	if (strlen(file_name) != 0) {
+		program_progress.current_file.size = strlen(file_name);
+		program_progress.current_file.str[program_progress.current_file.size] = '\0';
+		strncpy(program_progress.current_file.str, file_name, program_progress.current_file.size);
+		program_progress.current_file.size += 1;
+		program_progress.new_file = true;
+	}
+	if (program_progress.progress != progress) {
+		program_progress.progress = progress;
+	}
+	if ((program_progress.finished ^ finished) == 1) {
+		program_progress.finished = finished;
+	}
 }
 
 void _get_path_table_size(FileTreeNode* node, unsigned int& size) {

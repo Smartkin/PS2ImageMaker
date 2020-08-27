@@ -33,7 +33,7 @@ class Directory
 {
 public:
 	Directory(const char* path);
-	FileTree* get_files(Progress* pr);
+	FileTree* get_files();
 
 private:
 	std::string path;
