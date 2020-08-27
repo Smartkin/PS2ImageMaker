@@ -32,24 +32,24 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	// Fill files
 	auto cur_tree = ft;
 	unsigned int dir_lba = 8;
-	unsigned int data_sec = data_sector + 1;
-	unsigned int data_lba = dir_lba + this->directories_amount;
-	unsigned int file_local_sector = data_sector - 260 - this->directories_amount;
-	this->files.push_back(nullptr); // Allocate space for System.cnf
+	unsigned int data_sec = data_sector;
+	unsigned int data_lba = dir_lba - 1 + this->directories_amount;
+	unsigned int file_local_sector = data_sector - 261 - this->directories_amount;
+	//this->files.push_back(nullptr); // Allocate space for System.cnf
 	for (auto i = 0; i < this->directories_amount; ++i) {
 		for (auto node : cur_tree->tree) {
 			if (!node->file->IsDirectory()) {
 				auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
 					return p.first == node;
 				});
-				if (!strcmp("System.cnf", node->file->GetName().c_str())) {
+				/*if (!strcmp("System.cnf", node->file->GetName().c_str())) {
 					this->files.erase(this->files.begin());
 					this->files.insert(this->files.begin(), node);
 					(*vec_iter).second.global_sector = data_sector + 1;
 					(*vec_iter).second.lba = 7 + this->directories_amount;
 					(*vec_iter).second.local_sector = data_sector - 261 - this->directories_amount;
 					continue;
-				}
+				}*/
 				this->files.push_back(node);
 				(*vec_iter).second.global_sector = data_sec;
 				(*vec_iter).second.lba = data_lba++;

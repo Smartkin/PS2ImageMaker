@@ -126,12 +126,12 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	root_rec.ext_attr_rec_len = '\0';
 	root_rec.loc_of_ext_lsb = 261;
 	root_rec.loc_of_ext_msb = changeEndianness32(261);
-	auto root_len = 0x30 * 2U;
+	auto root_len = 0x800; /*0x30 * 2U;
 	for (auto node : ft->tree) {
 		// Directory record length is calculated as 0x30 * 2 + 0x30 * files + sum_of_the_names_lengths_of_all_files in that directory
 		// Actual files need two extra characters because of having ;1 appended
 		root_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-	}
+	}*/
 	root_rec.data_len_lsb = root_len;
 	root_rec.data_len_msb = changeEndianness32(root_len);
 	// Hardcoding to some random date because who cares lmao
@@ -621,10 +621,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 			nav_this.loc_of_ext_lsb = sm.get_file_sector(cur_dir);
 			nav_this.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir));
 			if (cur_dir->parent != nullptr) {
-				auto par_dir_len = 0x30 * 2U;
+				auto par_dir_len = 0x800;/*0x30 * 2U;
 				for (auto node : cur_dir->parent->next->tree) {
 					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}
+				}*/
 				nav_prev.data_len_lsb = par_dir_len;
 				nav_prev.data_len_msb = changeEndianness32(par_dir_len);
 				nav_prev.loc_of_ext_lsb = sm.get_file_sector(cur_dir->parent);
@@ -652,10 +652,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 				needed_memory += rec.dir_rec_len;
 				rec.loc_of_ext_lsb = sm.get_file_sector(node);
 				rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-				auto rec_len = 0x30 * 2U;
+				auto rec_len = 0x800;/*0x30 * 2U;
 				for (auto node : node->next->tree) {
 					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}
+				}*/
 				rec.data_len_lsb = rec_len;
 				rec.data_len_msb = changeEndianness32(rec_len);
 				rec.red_date_and_time[0] = 120;
@@ -721,10 +721,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 			needed_memory += rec.dir_rec_len;
 			rec.loc_of_ext_lsb = sm.get_file_sector(node);
 			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-			auto rec_len = 0x30 * 2U;
+			auto rec_len = 0x800;/*0x30 * 2U;
 			for (auto node : node->next->tree) {
 				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}
+			}*/
 			rec.data_len_lsb = rec_len;
 			rec.data_len_msb = changeEndianness32(rec_len);
 			rec.red_date_and_time[0] = 120;
