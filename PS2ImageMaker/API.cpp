@@ -12,6 +12,8 @@
 #include <map>
 #include <cassert>
 
+constexpr auto LOG_BLOCK_SIZE = 0x800U;
+
 void pack(Progress* pr, const char* game_path, const char* dest_path);
 void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft);
 void write_file_tree(Progress* pr, SectorManager& sm, std::ofstream& f);
@@ -21,6 +23,8 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
 unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 template<typename T>
 void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
+
+// Helper struct to pass to the fill file function
 struct ImageContext {
 	Timestamp twins_creation_time;
 	char dvd_gen[18] = "DVD-ROM GENERATOR";
@@ -30,39 +34,24 @@ struct ImageContext {
 	char iuea_free_impl[4] = { 0x61, 0x5, 0x0, 0x0 };
 	char iuea_cgms_impl[8] = { 0x49, 0x5, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
 };
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong& unique_id, ushort& cur_spec_lba, ImageContext& context);
+void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
 
+// Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	Progress* pr = new Progress();
 	std::thread* thr = new std::thread(pack, pr, game_path, dest_path);
 	return pr;
 }
 
+// Start the packing
 void pack(Progress* pr, const char* game_path, const char* dest_path) {
 	Directory dir(game_path);
+	update_progress_message(pr, "Enumerating files...");
 	FileTree* ft = dir.get_files(pr);
-	//std::sort(ft->tree.begin(), ft->tree.end(), [](FileTreeNode* a, FileTreeNode* b) {
-	//	auto a_is_sys = strcmp(a->file->GetName().c_str(), "System.cnf") == 0;
-	//	auto b_is_sys = strcmp(b->file->GetName().c_str(), "System.cnf") == 0;
-	//	auto a_is_dir = a->file->IsDirectory();
-	//	auto b_is_dir = b->file->IsDirectory();
-	//	if (a_is_sys) {
-	//		return true;
-	//	}
-	//	if (b_is_sys) {
-	//		return false;
-	//	}
-	//	if (b_is_dir && a_is_dir) {
-	//		return false;
-	//	}
-	//	if (!a_is_dir) {
-	//		return true;
-	//	}
-	//	if (!b_is_dir) {
-	//		return false;
-	//	}
-	//	return false;
-	//});
+	if (ft == nullptr) { // No file tree was built
+		pr->progress = 1.0;
+		return;
+	}
 	update_progress_message(pr, "Finished enumerating files");
 	std::ofstream image;
 	image.open(dest_path, std::ios_base::binary | std::ios_base::out);
@@ -86,7 +75,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	// Size of the identifier is written at the end of some fields in UDF descriptors, no clue why nothing is mentioned about this in UDF standard
 	// must have been some Sony shenanigans
 	char vol_ident_len = strlen(vol_ident) + 1;
-	// Fill first 16 sectors with nothing as they are system stuff
+	// Fill first 16 sectors with nothing as they are system stuff, Sony's CDVDGEN fills these with some bytes, potentially for CRC calculations?
 	for (int i = 0; i < 16; ++i) {
 		auto pad = '\0';
 		sm.write_sector<char>(f, &pad, 1);
@@ -106,12 +95,14 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	pvd.vol_space_size_msb = changeEndianness32(sm.get_total_sectors());
 	// Write unused field
 	pad_string(pvd.unused_3, 0, 32, '\0');
+	// There is only 1 volume and 1 partition
 	pvd.vol_set_size_lsb = 1;
 	pvd.vol_set_size_msb = changeEndianness16(1);
 	pvd.vol_seq_num_lsb = 1;
 	pvd.vol_seq_num_msb = changeEndianness16(1);
-	pvd.log_block_size_lsb = 2048;
-	pvd.log_block_size_msb = changeEndianness16(2048);
+	// Block size is always 2048(0x800)
+	pvd.log_block_size_lsb = LOG_BLOCK_SIZE;
+	pvd.log_block_size_msb = changeEndianness16(LOG_BLOCK_SIZE);
 	auto path_table_size = get_path_table_size(ft);
 	pvd.path_table_size_lsb = path_table_size;
 	pvd.path_table_size_msb = changeEndianness32(path_table_size);
@@ -126,12 +117,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	root_rec.ext_attr_rec_len = '\0';
 	root_rec.loc_of_ext_lsb = 261;
 	root_rec.loc_of_ext_msb = changeEndianness32(261);
-	auto root_len = 0x800; /*0x30 * 2U;
-	for (auto node : ft->tree) {
-		// Directory record length is calculated as 0x30 * 2 + 0x30 * files + sum_of_the_names_lengths_of_all_files in that directory
-		// Actual files need two extra characters because of having ;1 appended
-		root_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-	}*/
+	// These are actually supposed to be calculated but I couldn't find out the exact algo but it works out if it's just set to the entire logical block size
+	auto root_len = LOG_BLOCK_SIZE;
 	root_rec.data_len_lsb = root_len;
 	root_rec.data_len_msb = changeEndianness32(root_len);
 	// Hardcoding to some random date because who cares lmao
@@ -142,13 +129,16 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	root_rec.red_date_and_time[4] = 30;
 	root_rec.red_date_and_time[5] = '\0';
 	root_rec.red_date_and_time[6] = '\0';
-	root_rec.flags = 0x2;
+	root_rec.flags = 0x2; // Indicates that root should be treated as a folder
 	root_rec.file_size_in_inter = '\0';
 	root_rec.interleave_gap = '\0';
+	// Again there is only 1 volume
 	root_rec.vol_seq_num_lsb = 1;
 	root_rec.vol_seq_num_msb = changeEndianness16(1);
+	// Root's file identifier is byte 00
 	root_rec.file_ident_len = 1;
 	root_rec.file_ident = '\0';
+	// In ISO pvd for string padding spaces(0x20) are used, however in UDF \0(0x00) bytes are used
 	pad_string(pvd.volume_set_desc, 0, 128);
 	
 	strncpy(pvd.publisher_ident, publisher_ident, strlen(publisher_ident));
@@ -162,8 +152,10 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	
 	strncpy(pvd.cop_ident, cop_ident, strlen(cop_ident));
 	pad_string(pvd.cop_ident, strlen(cop_ident), 38);
+	// These are not really useful but can be added as options to include in the future
 	pad_string(pvd.abstract_ident, 0, 36);
 	pad_string(pvd.bibl_ident, 0, 37);
+	// Create date time :^)
 	auto create_year = "2009";
 	auto create_month = "09";
 	auto create_day = "03";
@@ -216,8 +208,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	auto udf_free_ea = "*UDF FreeEASpace";
 	auto udf_cgms_info = "*UDF DVD CGMS Info";
 	char compID = 0x8; // Compression ID of 8
-	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended
-	char id_suff[3] = { 0x2, 0x1, 0x3 };
+	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended, I haven't managed to figure out the exact algorithm to calculate this so currently it's just hardcoded to a date
+	char id_suff[3] = { 0x2, 0x1, 0x3 }; // This is special identifier suffix bytes that are written for certain identifiers
 	Timestamp twins_creation_time; // Just use date and time whenever Twinsanity PAL was released
 	twins_creation_time.microseconds = 0;
 	twins_creation_time.milliseconds = 0;
@@ -237,11 +229,11 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		// Write primary volume descriptor UDF	
 #pragma region PrimaryVolumeDescriptor_UDF writing
 		PrimaryVolumeDescriptor_UDF pvd;
-		DescriptorTag& pvd_tag = pvd.tag; // Reference to currently written to descriptor tag
+		DescriptorTag& pvd_tag = pvd.tag;
 		pvd_tag.tag_ident = cur_tag_ident;
 		pvd_tag.desc_version = cur_tag_desc_ver;
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
-		pvd_tag.desc_crc_len = 2032;
+		pvd_tag.desc_crc_len = sizeof(PrimaryVolumeDescriptor_UDF) - sizeof(DescriptorTag);
 		pvd_tag.tag_location = sm.get_current_sector();
 		pvd.vol_desc_seq_num = cur_vol_desc_seq_num++;
 		pvd.prim_vol_desc_num = 0;
@@ -282,12 +274,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string(pvd.impl_ident.ident_suffix, 0, 8, '\0');
 		pad_string((char*)pvd.impl_use, 0, 64, '\0');
 		pvd.pred_vol_desc_seq_loc = 0;
-		pad_string((char*)pvd.reserved, 0, 22, '\0');
-		auto pvd_checksum = cksum(((unsigned char*)&pvd) + sizeof(DescriptorTag), sizeof(PrimaryVolumeDescriptor_UDF) - sizeof(DescriptorTag));
-		pvd_tag.desc_crc = pvd_checksum;
-		pvd_tag.tag_checksum = 0;
-		auto tag_cksum = cksum_tag((unsigned char*)&pvd_tag, sizeof(DescriptorTag));
-		pvd_tag.tag_checksum = tag_cksum;
+		pad_string((char*)pvd.reserved, 0, 24, '\0');
+		fill_tag_checksum(pvd_tag, &pvd);
 		sm.write_sector<PrimaryVolumeDescriptor_UDF>(f, &pvd, sizeof(PrimaryVolumeDescriptor_UDF));
 #pragma endregion
 		cur_tag_ident = 4; // Other identifiers just start couting up from here
@@ -297,7 +285,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		ImplUseVolumeDescriptor iuv;
 		DescriptorTag& iuv_tag = iuv.tag;
 		iuv_tag.tag_ident = cur_tag_ident++;
-		iuv_tag.desc_crc_len = 2032;
+		iuv_tag.desc_crc_len = sizeof(ImplUseVolumeDescriptor) - sizeof(DescriptorTag);
 		iuv_tag.desc_version = cur_tag_desc_ver;
 		iuv_tag.tag_location = sm.get_current_sector();
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
@@ -330,11 +318,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string(iuv.impl_use.impl_id.ident, strlen(dvd_gen), 23, '\0');
 		pad_string(iuv.impl_use.impl_id.ident_suffix, 0, 8, '\0');
 		pad_string((char*)iuv.impl_use.impl_use, 0, 128, '\0');
-		auto iuv_checksum = cksum(((unsigned char*)&iuv) + sizeof(DescriptorTag), sizeof(ImplUseVolumeDescriptor) - sizeof(DescriptorTag));
-		iuv_tag.desc_crc = iuv_checksum;
-		iuv_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&iuv_tag, sizeof(DescriptorTag));
-		iuv_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(iuv_tag, &iuv);
 		sm.write_sector<ImplUseVolumeDescriptor>(f, &iuv, sizeof(ImplUseVolumeDescriptor));
 #pragma endregion
 
@@ -344,7 +328,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		DescriptorTag& pd_tag = pd.tag;
 		pd_tag.tag_ident = cur_tag_ident++;
 		pd_tag.desc_version = cur_tag_desc_ver;
-		pd_tag.desc_crc_len = 2032;
+		pd_tag.desc_crc_len = sizeof(PartitionDescriptor) - sizeof(DescriptorTag);
 		pd_tag.tag_location = sm.get_current_sector();
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
 		pd.vol_desc_seq_num = cur_vol_desc_seq_num++;
@@ -365,11 +349,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		pad_string(pd.impl_ident.ident_suffix, 0, 8, '\0');
 		pad_string((char*)pd.impl_use, 0, 128, '\0');
 		pad_string((char*)pd.reserved, 0, 156, '\0');
-		auto pd_checksum = cksum(((unsigned char*)&pd) + sizeof(DescriptorTag), sizeof(PartitionDescriptor) - sizeof(DescriptorTag));
-		pd_tag.desc_crc = pd_checksum;
-		pd_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&pd_tag, sizeof(DescriptorTag));
-		pd_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(pd_tag, &pd);
 		sm.write_sector<PartitionDescriptor>(f, &pd, sizeof(PartitionDescriptor));
 #pragma endregion
 
@@ -379,7 +359,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		DescriptorTag& lv_tag = lv.tag;
 		lv_tag.tag_ident = cur_tag_ident++;
 		lv_tag.desc_version = cur_tag_desc_ver;
-		lv_tag.desc_crc_len = 2032;
+		lv_tag.desc_crc_len = sizeof(LogicalVolumeDescriptor) - sizeof(DescriptorTag);
 		lv_tag.tag_location = sm.get_current_sector();
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
 		lv.vol_desc_seq_num = cur_vol_desc_seq_num++;
@@ -397,10 +377,11 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		strncpy(lv.domain_ident.ident_suffix, id_suff, 3);
 		pad_string(lv.domain_ident.ident_suffix, 3, 8, '\0');
 		// This unknown number is set in the log_vol_cont_use[1], according to the UDF standard this is not the way this field should be used :P
-		char unkNum2 = 0x10;
+		char unkNum2 = 0x10; // Usually this indicates that the string is unicode compressed meaning one character takes 2 bytes, but no string is written to the upcoming field what so ever
 		lv.log_vol_cont_use[0] = '\0';
 		strncpy(lv.log_vol_cont_use + 1, &unkNum2, 1);
 		pad_string(lv.log_vol_cont_use, 2, 16, '\0');
+		// Table maps related stuff, not sure what for but these values are all hardcoded due to them being constant for all PS2 games
 		lv.map_table_len = 6;
 		lv.num_of_part_maps = 1;
 		lv.impl_ident.flags = 0;
@@ -414,11 +395,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		lv.part_maps[1] = 6;
 		lv.part_maps[2] = 1;
 		pad_string((char*)lv.part_maps, 3, 6, '\0');
-		auto lv_checksum = cksum(((unsigned char*)&lv) + sizeof(DescriptorTag), sizeof(LogicalVolumeDescriptor) - sizeof(DescriptorTag));
-		lv_tag.desc_crc = lv_checksum;
-		lv_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&lv_tag, sizeof(DescriptorTag));
-		lv_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(lv_tag, &lv);
 		sm.write_sector<LogicalVolumeDescriptor>(f, &lv, sizeof(LogicalVolumeDescriptor));
 #pragma endregion
 
@@ -428,18 +405,14 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		DescriptorTag& usd_tag = usd.tag;
 		usd_tag.tag_ident = cur_tag_ident++;
 		usd_tag.desc_version = cur_tag_desc_ver;
-		usd_tag.desc_crc_len = 2032;
+		usd_tag.desc_crc_len = sizeof(UnallocatedSpaceDescriptor) - sizeof(DescriptorTag);
 		usd_tag.tag_location = sm.get_current_sector();
 		// Tag checksum and its desc crc fields are written after descriptor has been filled
 		usd.vol_desc_seq_num = cur_vol_desc_seq_num++;
 		usd.alloc_desc.length = 0;
 		usd.alloc_desc.location = 0;
 		usd.num_of_alloc_desc = 0;
-		auto usd_checksum = cksum(((unsigned char*)&usd) + sizeof(DescriptorTag), sizeof(UnallocatedSpaceDescriptor) - sizeof(DescriptorTag));
-		usd_tag.desc_crc = usd_checksum;
-		usd_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&usd_tag, sizeof(DescriptorTag));
-		usd_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(usd_tag, &usd);
 		sm.write_sector<UnallocatedSpaceDescriptor>(f, &usd, sizeof(UnallocatedSpaceDescriptor));
 #pragma endregion
 
@@ -448,13 +421,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 		DescriptorTag& td_tag = td.tag;
 		td_tag.tag_ident = cur_tag_ident++;
 		td_tag.desc_version = cur_tag_desc_ver;
-		td_tag.desc_crc_len = 2032;
+		td_tag.desc_crc_len = sizeof(TerminatingDescriptor) - sizeof(DescriptorTag);
 		td_tag.tag_location = sm.get_current_sector();
-		auto td_checksum = cksum(((unsigned char*)&td) + sizeof(DescriptorTag), sizeof(TerminatingDescriptor) - sizeof(DescriptorTag));
-		td_tag.desc_crc = td_checksum;
-		td_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&td_tag, sizeof(DescriptorTag));
-		td_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(td_tag, &td);
 		sm.write_sector<TerminatingDescriptor>(f, &td, sizeof(TerminatingDescriptor));
 
 		// Write trailing logical sectors
@@ -470,7 +439,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	DescriptorTag& lvi_tag = lvi.tag;
 	lvi_tag.tag_ident = 9;
 	lvi_tag.desc_version = 2;
-	lvi_tag.desc_crc_len = 2032;
+	lvi_tag.desc_crc_len = sizeof(LogicalVolumeIntegrityDescriptor) - sizeof(DescriptorTag);
 	lvi_tag.tag_location = sm.get_current_sector();
 	// Tag checksum and its desc crc fields are written after descriptor has been filled
 	lvi.rec_date_and_time = twins_creation_time;
@@ -495,11 +464,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	lvi.impl_use.max_udf_write_rev = min_udf_ver;
 	lvi.impl_use.impl_use[0] = '\0';
 	lvi.impl_use.impl_use[1] = '\0';
-	auto lvi_checksum = cksum(((unsigned char*)&lvi) + sizeof(DescriptorTag), sizeof(LogicalVolumeIntegrityDescriptor) - sizeof(DescriptorTag));
-	lvi_tag.desc_crc = lvi_checksum;
-	lvi_tag.tag_checksum = 0;
-	auto tag_cksum = cksum_tag((unsigned char*)&lvi_tag, sizeof(DescriptorTag));
-	lvi_tag.tag_checksum = tag_cksum;
+	fill_tag_checksum(lvi_tag, &lvi);
 	sm.write_sector<LogicalVolumeIntegrityDescriptor>(f, &lvi, sizeof(LogicalVolumeIntegrityDescriptor));
 #pragma endregion
 
@@ -509,13 +474,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	DescriptorTag& td_tag = td.tag;
 	td_tag.tag_ident = 8;
 	td_tag.desc_version = 2;
-	td_tag.desc_crc_len = 2032;
+	td_tag.desc_crc_len = sizeof(TerminatingDescriptor) - sizeof(DescriptorTag);
 	td_tag.tag_location = sm.get_current_sector();
-	auto td_checksum = cksum(((unsigned char*)&td) + sizeof(DescriptorTag), sizeof(TerminatingDescriptor) - sizeof(DescriptorTag));
-	td_tag.desc_crc = td_checksum;
-	td_tag.tag_checksum = 0;
-	tag_cksum = cksum_tag((unsigned char*)&td_tag, sizeof(DescriptorTag));
-	td_tag.tag_checksum = tag_cksum;
+	fill_tag_checksum(td_tag, &td);
 	sm.write_sector<TerminatingDescriptor>(f, &td, sizeof(TerminatingDescriptor));
 
 	// Skip reserved sectors until sector 256
@@ -530,7 +491,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	DescriptorTag& avd_tag = avd.tag;
 	avd_tag.tag_ident = 2;
 	avd_tag.desc_version = 2;
-	avd_tag.desc_crc_len = 2032;
+	avd_tag.desc_crc_len = sizeof(AnchorVolumeDescriptorPointer) - sizeof(DescriptorTag);
 	avd_tag.tag_location = sm.get_current_sector();
 	// Tag checksum and its desc crc fields are written after descriptor has been filled
 	avd.main_vol_desc_seq_extent.length = 0x8000;
@@ -538,11 +499,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	avd.reserve_vol_desc_seq_extent.length = 0x8000;
 	avd.reserve_vol_desc_seq_extent.location = 48;
 	pad_string((char*)avd.reserved, 0, 480, '\0');
-	auto avd_checksum = cksum(((unsigned char*)&avd) + sizeof(DescriptorTag), sizeof(AnchorVolumeDescriptorPointer) - sizeof(DescriptorTag));
-	avd_tag.desc_crc = avd_checksum;
-	avd_tag.tag_checksum = 0;
-	tag_cksum = cksum_tag((unsigned char*)&avd_tag, sizeof(DescriptorTag));
-	avd_tag.tag_checksum = tag_cksum;
+	fill_tag_checksum(avd_tag, &avd);
 	sm.write_sector<AnchorVolumeDescriptorPointer>(f, &avd, sizeof(AnchorVolumeDescriptorPointer));
 #pragma endregion
 
@@ -564,7 +521,6 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	free(path_table_buffer);
 #pragma endregion
 
-	// SECTORS UNTIL HERE CONFIRMED TO BE WRITTEN CORRECTLY, AFTER THIS SECTORS ARE AT HIGH ODDS WRITTEN BADLY
 
 	// Write directory records
 #pragma region DirectoryRecord sectors writing
@@ -797,9 +753,9 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 #pragma region FileSetDescriptor writing
 	FileSetDescriptor fs;
 	DescriptorTag& fs_tag = fs.tag;
-	fs_tag.tag_ident = 256;
+	fs_tag.tag_ident = 0x100;
 	fs_tag.desc_version = 2;
-	fs_tag.desc_crc_len = 2032;
+	fs_tag.desc_crc_len = sizeof(FileSetDescriptor) - sizeof(DescriptorTag);
 	fs_tag.tag_location = 0;
 	// Tag checksum and its desc crc fields are written after descriptor has been filled
 	fs.rec_date_and_time = twins_creation_time;
@@ -841,11 +797,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	fs.next_extent.extent_loc.part_ref_num = 0;
 	pad_string((char*)fs.next_extent.impl_use, 0, 6, '\0');
 	pad_string((char*)fs.reserved, 0, 48, '\0');
-	auto fs_checksum = cksum(((unsigned char*)&fs) + sizeof(DescriptorTag), sizeof(FileSetDescriptor) - sizeof(DescriptorTag));
-	fs_tag.desc_crc = fs_checksum;
-	fs_tag.tag_checksum = 0;
-	tag_cksum = cksum_tag((unsigned char*)&fs_tag, sizeof(DescriptorTag));
-	fs_tag.tag_checksum = tag_cksum;
+	fill_tag_checksum(fs_tag, &fs);
 	sm.write_sector<FileSetDescriptor>(f, &fs, sizeof(FileSetDescriptor));
 #pragma endregion
 
@@ -880,11 +832,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	for (int i = 0; i < directories; ++i) {
 		// Update root's lba and its checksum
 		fi_root_tag.tag_location = cur_spec_lba;
-		auto fi_checksum = cksum(((unsigned char*)&fi_root) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
-		fi_root_tag.desc_crc = fi_checksum;
-		fi_root_tag.tag_checksum = 0;
-		tag_cksum = cksum_tag((unsigned char*)&fi_root_tag, sizeof(DescriptorTag));
-		fi_root_tag.tag_checksum = tag_cksum;
+		fill_tag_checksum(fi_root_tag, &fi_root);
 		if (cur_dir != nullptr) {
 			fi_root.icb.extent_loc.log_block_num = sm.get_file_lba(cur_dir);
 		}
@@ -952,7 +900,7 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	DescriptorTag& fe_tag = root_fe.tag;
 	fe_tag.tag_ident = 0x105;
 	fe_tag.desc_version = 2;
-	fe_tag.desc_crc_len = 0x12C;
+	fe_tag.desc_crc_len = sizeof(FileEntry) - sizeof(DescriptorTag);
 	fe_tag.tag_location = cur_spec_lba;
 	ICBTag& fe_icb = root_fe.icb_tag;
 	fe_icb.prior_rec_num_of_direct_entries = 0;
@@ -1283,11 +1231,7 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 	// First write the whole main struct without descriptor tag to allow tag calculate the checksum
 	memcpy(str_buf + sizeof(DescriptorTag), ((char*)&fi) + sizeof(DescriptorTag), sizeof(FileIdentifierDescriptor) - sizeof(DescriptorTag));
 	memcpy(str_buf + sizeof(FileIdentifierDescriptor), f_name_buf, f_buf_len);
-	auto fi_checksum = cksum(((unsigned char*)str_buf) + sizeof(DescriptorTag), struct_size - sizeof(DescriptorTag));
-	tag.desc_crc = fi_checksum;
-	tag.tag_checksum = 0;
-	auto tag_cksum = cksum_tag((unsigned char*)&tag, sizeof(DescriptorTag));
-	tag.tag_checksum = tag_cksum;
+	fill_tag_checksum(tag, str_buf, struct_size);
 	// Write the tag at the end
 	memcpy(str_buf, &tag, sizeof(DescriptorTag));
 	buffers.push_back(std::pair<char*, unsigned int>(str_buf, struct_size));
@@ -1296,8 +1240,8 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 	return struct_size;
 }
 
-// Helper function for writing File Entries for files recursively
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong& unique_id, ushort& cur_spec_lba, ImageContext& context)
+// Helper function for writing File Entries for files
+void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context)
 {
 	auto files = sm.get_files();
 	for (auto file : files) {
@@ -1305,7 +1249,7 @@ void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong& unique_id, ushort&
 		DescriptorTag& fe_tag = fe.tag;
 		fe_tag.tag_ident = 0x105;
 		fe_tag.desc_version = 2;
-		fe_tag.desc_crc_len = 0x12C;
+		fe_tag.desc_crc_len = sizeof(FileEntry) - sizeof(DescriptorTag);
 		fe_tag.tag_location = cur_spec_lba;
 		ICBTag& fe_icb = fe.icb_tag;
 		fe_icb.prior_rec_num_of_direct_entries = 0;

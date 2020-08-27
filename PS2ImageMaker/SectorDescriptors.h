@@ -159,7 +159,7 @@ struct PrimaryVolumeDescriptor_UDF {
 	EntityID impl_ident;
 	byte impl_use[64];
 	uint pred_vol_desc_seq_loc;
-	byte reserved[22];
+	byte reserved[24];
 };
 
 struct LVInformation {

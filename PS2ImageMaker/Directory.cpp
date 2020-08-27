@@ -18,7 +18,6 @@ FileTree* Directory::get_files(Progress* pr) {
 	auto find_handle = FindFirstFileA(path.c_str(), &file_info);
 	if (find_handle != INVALID_HANDLE_VALUE) {
 		FindClose(find_handle);
-		update_progress_message(pr, "Enumerating files...");
 		enumerate_files_recursively(ft, nullptr, path);
 		return ft;
 	}
