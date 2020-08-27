@@ -564,6 +564,8 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	free(path_table_buffer);
 #pragma endregion
 
+	// SECTORS UNTIL HERE CONFIRMED TO BE WRITTEN CORRECTLY, AFTER THIS SECTORS ARE AT HIGH ODDS WRITTEN BADLY
+
 	// Write directory records
 #pragma region DirectoryRecord sectors writing
 	auto directories = sm.get_total_directories();
@@ -610,12 +612,12 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 	for (int i = 0; i < directories; ++i) {
 		auto needed_memory = 96; // Amount of needed memory for a sector
 		auto index = 0;
-		auto dir_len = 0x30 * 2U;
+		auto dir_len = 0x800;// 0x30 * 2U;
 		// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 		if (cur_dir != nullptr) {
-			for (auto node : cur_tree->tree) {
+			/*for (auto node : cur_tree->tree) {
 				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}
+			}*/
 			nav_this.data_len_lsb = dir_len;
 			nav_this.data_len_msb = changeEndianness32(dir_len);
 			nav_this.loc_of_ext_lsb = sm.get_file_sector(cur_dir);
@@ -1081,11 +1083,14 @@ void write_sectors(Progress* pr, std::ofstream& f, FileTree* ft) {
 
 	update_progress_message(pr, "Finished writing sectors");
 	write_file_tree(pr, sm, f);
-
+	
 	update_progress_message(pr, "Writing special sectors...");
-	// Write a special pad sector
+	// Write special pad sectors
 	auto pad_sec = '\0';
-	sm.write_sector(f, &pad_sec);
+	auto pad_secs = sm.get_pad_sectors();
+	for (int i = 0; i < pad_secs; ++i) {
+		sm.write_sector(f, &pad_sec);
+	}
 
 	// Write a special end of session descriptor?
 	EndOfSessionDescriptor eos;

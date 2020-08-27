@@ -30,6 +30,7 @@ public:
 	unsigned int get_file_sector(FileTreeNode* node);
 	unsigned int get_file_lba(FileTreeNode* node);
 	unsigned int get_file_local_sector(FileTreeNode* node);
+	unsigned int get_pad_sectors();
 	std::vector<FileTreeNode*> get_directories();
 	std::vector<FileTreeNode*> get_files();
 
@@ -43,6 +44,7 @@ private:
 	long files_amount;
 	unsigned int total_sectors;
 	unsigned int partition_start_sector;
+	unsigned int pad_sectors; // Amount of pad sectors to put in the end
 	std::vector<std::pair<FileTreeNode*, FileLocation>> file_sectors;
 	std::vector<FileTreeNode*> directories;
 	std::vector<FileTreeNode*> files;

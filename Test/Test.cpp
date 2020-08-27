@@ -2,13 +2,15 @@
 //
 
 #include <iostream>
-#include <thread>
 #include <API.h>
-#include <Windows.h>
+#include <cassert>
 
 int main()
 {
-	Progress* pr = start_packing("D:/Twinsanity Discs/Twins Full Extract PAL", "test.iso");
+    auto disc_folder_path = "Put folder path here";
+    auto iso_name = "compiled.iso";
+    assert(strcmp("Put folder path here", disc_folder_path) != 0);
+	Progress* pr = start_packing(disc_folder_path, iso_name);
     do {
         if (pr->new_message) {
             std::cout << pr->message.str << "\n";
