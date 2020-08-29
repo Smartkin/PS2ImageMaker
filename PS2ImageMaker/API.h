@@ -3,11 +3,6 @@
 #define DLLEXPORT __declspec(dllexport)
 #endif
 
-extern "C" struct DLLEXPORT BasicString {
-	char str[256];
-	int size;
-};
-
 enum ProgressState {
 	FAILED = -1,
 	ENUM_FILES,
@@ -18,7 +13,8 @@ enum ProgressState {
 };
 
 extern "C" struct DLLEXPORT Progress {
-	BasicString current_file;
+	char file_name[256];
+	int size;
 	ProgressState state;
 	float progress;
 	bool finished;
@@ -26,12 +22,14 @@ extern "C" struct DLLEXPORT Progress {
 	bool new_file;
 };
 
-extern "C" DLLEXPORT Progress& start_packing(const char* game_path, const char* dest_path);
+extern "C" DLLEXPORT Progress* start_packing(const char* game_path, const char* dest_path);
 
-extern "C" DLLEXPORT Progress& poll_progress();
+extern "C" DLLEXPORT Progress* poll_progress();
 
 void update_progress(ProgressState message, float progress, const char* file_name = "", bool finished = false);
 
 extern Progress program_progress;
 extern Progress progress_copy;
 extern bool progress_dirty;
+extern char game_path[1024];
+extern char dest_path[1024];

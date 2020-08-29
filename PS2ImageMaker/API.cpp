@@ -18,6 +18,8 @@ std::mutex progress_mut;
 Progress program_progress;
 Progress progress_copy;
 bool progress_dirty;
+char game_path[1024];
+char dest_path[1024];
 
 void pack(const char* game_path, const char* dest_path);
 void write_sectors(std::ofstream& f, FileTree* ft);
@@ -42,18 +44,23 @@ struct ImageContext {
 void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
 
 // Launch the thread to pack
-extern "C" Progress& start_packing(const char* game_path, const char* dest_path) {
-	std::thread* thr = new std::thread(pack, game_path, dest_path);
-	return progress_copy;
+extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
+	// Copy over the received strings
+	strncpy(::game_path, game_path, strlen(game_path));
+	::game_path[strlen(game_path)] = '\0';
+	strncpy(::dest_path, dest_path, strlen(dest_path));
+	::dest_path[strlen(dest_path)] = '\0';
+	std::thread* thr = new std::thread(pack, ::game_path, ::dest_path);
+	return &progress_copy;
 }
 
-extern "C" Progress& poll_progress() {
+extern "C" Progress* poll_progress() {
 	std::lock_guard<std::mutex> guard(progress_mut);
 	if (progress_dirty) {
 		progress_copy = program_progress;
 		progress_dirty = false;
 	}
-	return progress_copy;
+	return &progress_copy;
 }
 
 // Start the packing
@@ -1087,10 +1094,10 @@ void update_progress(ProgressState state, float progress, const char* file_name,
 		program_progress.new_state = true;
 	}
 	if (strlen(file_name) != 0) {
-		program_progress.current_file.size = strlen(file_name);
-		program_progress.current_file.str[program_progress.current_file.size] = '\0';
-		strncpy(program_progress.current_file.str, file_name, program_progress.current_file.size);
-		program_progress.current_file.size += 1;
+		program_progress.size = strlen(file_name);
+		program_progress.file_name[program_progress.size] = '\0';
+		strncpy(program_progress.file_name, file_name, program_progress.size);
+		program_progress.size += 1;
 		program_progress.new_file = true;
 	}
 	if (program_progress.progress != progress) {

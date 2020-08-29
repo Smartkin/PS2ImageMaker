@@ -10,12 +10,12 @@ int main()
     auto disc_folder_path = "Put folder path here";
     auto iso_name = "compiled.iso"; // Can be an iso name to create locally or a path
     assert(strcmp("Put folder path here", disc_folder_path) != 0);
-    Progress& pr = start_packing(disc_folder_path, iso_name);
+    Progress* pr = start_packing(disc_folder_path, iso_name);
     do {
-        Progress& pr = poll_progress();
+        Progress* pr = poll_progress();
         bool write_progress = false;
-        if (pr.new_state) {
-            switch (pr.state)
+        if (pr->new_state) {
+            switch (pr->state)
             {
             case ProgressState::ENUM_FILES:
                 std::cout << "Enumerating files..." << "\n";
@@ -37,17 +37,17 @@ int main()
                 break;
             }
             write_progress = true;
-            pr.new_state = false;
+            pr->new_state = false;
         }
-        if (pr.new_file) {
-            std::cout << "Current file: " << pr.current_file.str << "\n";
+        if (pr->new_file) {
+            std::cout << "Current file: " << pr->file_name << "\n";
             write_progress = true;
-            pr.new_file = false;
+            pr->new_file = false;
         }
         if (write_progress) {
-            std::cout << "Progress: " << pr.progress * 100 << "%" << "\n";
+            std::cout << "Progress: " << pr->progress * 100 << "%" << "\n";
         }
-    } while (!pr.finished);
+    } while (!pr->finished);
 
     std::cout << "End\n";
     return 0;
