@@ -25,7 +25,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 
 int main()
 {
-    auto disc_folder_path = "Put folder path here";
+    auto disc_folder_path = "D:/Twinsanity Discs/Twins Full Extract PAL";
     auto iso_name = "compiled.iso"; // Can be an iso name to create locally or a path
     assert(strcmp("Put folder path here", disc_folder_path) != 0);
     Progress* pr = start_packing(disc_folder_path, iso_name);

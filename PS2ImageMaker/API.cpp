@@ -1096,15 +1096,19 @@ void write_sectors(FILE* f, FileTree* ft) {
 void write_file_tree(SectorManager& sm, FILE* f) {
 	auto files = sm.get_files();
 	auto progress_increment = 0.8 / sm.get_total_files();
+	auto max_file = std::max_element(files.begin(), files.end(), [](FileTreeNode* n1, FileTreeNode* n2) {
+		return n1->file->GetSize() < n2->file->GetSize();
+	});
+	auto read_buf = new char[(*max_file)->file->GetSize()];
 	for (auto node : files) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
 		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
-		auto read_buf = new char[node->file->GetSize()];
 		fread(read_buf, 1, node->file->GetSize(), in_f);
 		//in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
 		sm.write_file(f, read_buf, node->file->GetSize());
-		delete[] read_buf;
+		
 	}
+	delete[] read_buf;
 }
 
 void update_progress(ProgressState state, float progress, const char* file_name, bool finished) {
