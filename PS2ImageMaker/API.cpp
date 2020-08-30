@@ -30,6 +30,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <map>
 #include <cassert>
+#include <stdio.h>
 
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
 std::mutex progress_mut;
@@ -38,10 +39,11 @@ Progress progress_copy;
 bool progress_dirty;
 char game_path[1024];
 char dest_path[1024];
+unsigned int buffer_size = 32 * 1024 * 1024U; // By default use 64 MB of file buffer
 
 void pack(const char* game_path, const char* dest_path);
-void write_sectors(std::ofstream& f, FileTree* ft);
-void write_file_tree(SectorManager& sm, std::ofstream& f);
+void write_sectors(FILE* f, FileTree* ft);
+void write_file_tree(SectorManager& sm, FILE* f);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
@@ -59,7 +61,7 @@ struct ImageContext {
 	char iuea_free_impl[4] = { 0x61, 0x5, 0x0, 0x0 };
 	char iuea_cgms_impl[8] = { 0x49, 0x5, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
 };
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
+void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
@@ -81,6 +83,10 @@ extern "C" Progress* poll_progress() {
 	return &progress_copy;
 }
 
+extern "C" void set_file_buffer(unsigned int buffer_size) {
+	::buffer_size = buffer_size;
+}
+
 // Start the packing
 void pack(const char* game_path, const char* dest_path) {
 	Directory dir(game_path);
@@ -91,8 +97,8 @@ void pack(const char* game_path, const char* dest_path) {
 		return;
 	}
 	update_progress(ProgressState::WRITE_SECTORS, 0.1);
-	std::ofstream image;
-	image.open(dest_path, std::ios_base::binary | std::ios_base::out);
+	FILE* image = fopen(dest_path, "wb+");
+	// image.open(dest_path, std::ios_base::binary | std::ios_base::out);
 	write_sectors(image, ft);
 	update_progress(ProgressState::FINISHED, 1.0, "", true);
 }
@@ -100,7 +106,7 @@ void pack(const char* game_path, const char* dest_path) {
 // All the writing for each sector is packed into this single function(for the most part) instead of having each sector to be in its separate function
 // biggest reason is because all sectors need a very strict ordering so instead of creating a seperate function for each
 // they are just divided into regions, additionally certain sector's data can depend on others
-void write_sectors(std::ofstream& f, FileTree* ft) {
+void write_sectors(FILE* f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
 	auto sys_ident = "PLAYSTATION";
@@ -155,7 +161,10 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 	root_rec.loc_of_ext_lsb = 261;
 	root_rec.loc_of_ext_msb = changeEndianness32(261);
 	// These are actually supposed to be calculated but I couldn't find out the exact algo but it works out if it's just set to the entire logical block size
-	auto root_len = LOG_BLOCK_SIZE;
+	auto root_len = 0x30 * 2U;
+	for (auto node : ft->tree) {
+		root_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+	}
 	root_rec.data_len_lsb = root_len;
 	root_rec.data_len_msb = changeEndianness32(root_len);
 	// Hardcoding to some random date because who cares lmao
@@ -605,21 +614,21 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 	for (int i = 0; i < directories; ++i) {
 		auto needed_memory = 96; // Amount of needed memory for a sector
 		auto index = 0;
-		auto dir_len = 0x800;// 0x30 * 2U;
+		auto dir_len = 0x30 * 2U;
 		// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 		if (cur_dir != nullptr) {
-			/*for (auto node : cur_tree->tree) {
-				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}*/
+			for (auto node : cur_tree->tree) {
+				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+			}
 			nav_this.data_len_lsb = dir_len;
 			nav_this.data_len_msb = changeEndianness32(dir_len);
 			nav_this.loc_of_ext_lsb = sm.get_file_sector(cur_dir);
 			nav_this.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir));
 			if (cur_dir->parent != nullptr) {
-				auto par_dir_len = 0x800;/*0x30 * 2U;
+				auto par_dir_len = 0x30 * 2U;
 				for (auto node : cur_dir->parent->next->tree) {
-					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}*/
+					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				}
 				nav_prev.data_len_lsb = par_dir_len;
 				nav_prev.data_len_msb = changeEndianness32(par_dir_len);
 				nav_prev.loc_of_ext_lsb = sm.get_file_sector(cur_dir->parent);
@@ -643,14 +652,14 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 			if (node->file->IsDirectory() && cur_dir == nullptr) {
 				auto file = node->file;
 				DirectoryRecord& rec = dir_rec[index++];
-				rec.dir_rec_len = 48 + file->GetName().size() + file->GetName().size() % 2;
+				rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
 				needed_memory += rec.dir_rec_len;
 				rec.loc_of_ext_lsb = sm.get_file_sector(node);
 				rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-				auto rec_len = 0x800;/*0x30 * 2U;
+				auto rec_len = 0x30 * 2U;
 				for (auto node : node->next->tree) {
-					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}*/
+					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				}
 				rec.data_len_lsb = rec_len;
 				rec.data_len_msb = changeEndianness32(rec_len);
 				rec.red_date_and_time[0] = 120;
@@ -684,7 +693,7 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 		for (auto node : file_buf) {
 			auto file = node->file;
 			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 50 + file->GetName().size() + file->GetName().size() % 2;
+			rec.dir_rec_len = 50 + file->GetName().size() - file->GetName().size() % 2;
 			needed_memory += rec.dir_rec_len;
 			rec.loc_of_ext_lsb = sm.get_file_sector(node);
 			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
@@ -712,14 +721,14 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 		for (auto node : dir_buf) {
 			auto file = node->file;
 			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 48 + file->GetName().size() + file->GetName().size() % 2;
+			rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
 			needed_memory += rec.dir_rec_len;
 			rec.loc_of_ext_lsb = sm.get_file_sector(node);
 			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-			auto rec_len = 0x800;/*0x30 * 2U;
+			auto rec_len = 0x30 * 2U;
 			for (auto node : node->next->tree) {
-				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}*/
+				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+			}
 			rec.data_len_lsb = rec_len;
 			rec.data_len_msb = changeEndianness32(rec_len);
 			rec.red_date_and_time[0] = 120;
@@ -1089,17 +1098,23 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 	eos.alloc_desc2.log_block_num = 0x30;
 	fill_tag_checksum(eos_tag, &eos);
 	sm.write_sector(f, &eos);
+	fclose(f);
 }
 
-void write_file_tree(SectorManager& sm, std::ofstream& f) {
+void write_file_tree(SectorManager& sm, FILE* f) {
 	auto files = sm.get_files();
 	auto progress_increment = 0.8 / sm.get_total_files();
+	auto max_file = std::max_element(files.begin(), files.end(), [](FileTreeNode* n1, FileTreeNode* n2) {
+		return n1->file->GetSize() < n2->file->GetSize();
+	});
+	char* read_buf = new char[::buffer_size];
 	for (auto node : files) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
-		std::ifstream in_f;
-		in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
-		sm.write_file(f, in_f.rdbuf(), node->file->GetSize());
+		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
+		sm.write_file(f, in_f, read_buf, node->file->GetSize(), ::buffer_size);
+		
 	}
+	delete[] read_buf;
 }
 
 void update_progress(ProgressState state, float progress, const char* file_name, bool finished) {
@@ -1292,7 +1307,7 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 }
 
 // Helper function for writing File Entries for files
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context)
+void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context)
 {
 	auto files = sm.get_files();
 	for (auto file : files) {

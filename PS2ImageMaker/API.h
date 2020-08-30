@@ -42,6 +42,8 @@ extern "C" struct DLLEXPORT Progress {
 
 extern "C" DLLEXPORT Progress* start_packing(const char* game_path, const char* dest_path);
 
+extern "C" DLLEXPORT void set_file_buffer(unsigned int buffer_size);
+
 extern "C" DLLEXPORT Progress* poll_progress();
 
 void update_progress(ProgressState message, float progress, const char* file_name = "", bool finished = false);
@@ -51,3 +53,4 @@ extern Progress progress_copy;
 extern bool progress_dirty;
 extern char game_path[1024];
 extern char dest_path[1024];
+extern unsigned int buffer_size;
