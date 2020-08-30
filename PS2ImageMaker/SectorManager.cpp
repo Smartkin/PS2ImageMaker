@@ -1,3 +1,21 @@
+/*
+PS2ImageMaker - Library for creating Playstation 2 (PS2)compatible images
+Copyright(C) 2020 Vladislav Smyshlyaev(Smartkin)
+
+This program is free software : you can redistribute it and /or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.If not, see < https://www.gnu.org/licenses/>.
+*/
+
 #include "pch.h"
 #include "SectorManager.h"
 #include "Directory.h"
@@ -20,8 +38,8 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	// Offset data sector by however many header sectors will be needed for files and directories
 	data_sector += directory_records + file_set_descriptors + terminating_descriptors + file_ident_descriptors + file_entry_directories + file_entry_files;
 	auto data_sectors = ft->get_files_size() / 2048;
-	total_sectors = data_sector + data_sectors;
-	if (total_sectors % 0x10 != 0) {
+	total_sectors = data_sector + data_sectors + 1; // End of session descriptor?
+	if (total_sectors % 0x10 != 0) { // Not entirely sure why but the amount of sectors needs to be a multiple of 0x10(16)
 		pad_sectors = (0x10 - total_sectors % 0x10) - 1;
 		total_sectors += (0x10 - total_sectors % 0x10); // however many pad sectors and 1 extra end of session descriptor?
 	}
