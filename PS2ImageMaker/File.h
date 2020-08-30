@@ -27,6 +27,7 @@ public:
 	std::string GetExt();
 	std::string GetName();
 	long GetSize();
+	unsigned int GetSectorsSpace();
 
 private:
 	bool is_directory;

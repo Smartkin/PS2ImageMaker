@@ -1083,9 +1083,9 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 	eos_tag.desc_version = 2;
 	eos_tag.desc_crc_len = 2032;
 	eos_tag.tag_location = sm.get_total_sectors() - 1;
-	eos.alloc_desc1.info_len = 0x800;
+	eos.alloc_desc1.info_len = 0x8000;
 	eos.alloc_desc1.log_block_num = 0x20;
-	eos.alloc_desc2.info_len = 0x800;
+	eos.alloc_desc2.info_len = 0x8000;
 	eos.alloc_desc2.log_block_num = 0x30;
 	fill_tag_checksum(eos_tag, &eos);
 	sm.write_sector(f, &eos);
@@ -1319,7 +1319,7 @@ void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort c
 		fe.record_disp_attrib = 0;
 		fe.record_len = 0;
 		fe.info_len = file->file->GetSize();
-		fe.log_blocks_rec = 1;
+		fe.log_blocks_rec = file->file->GetSectorsSpace();
 		fe.access_time = context.twins_creation_time;
 		fe.mod_time = context.twins_creation_time;
 		fe.attrib_time = context.twins_creation_time;

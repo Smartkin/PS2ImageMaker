@@ -47,3 +47,15 @@ long File::GetSize()
 {
 	return size;
 }
+
+unsigned int File::GetSectorsSpace()
+{
+	auto aligned_size = 0;
+	if (size % 2048 != 0) {
+		aligned_size = size + (2048 - size % 2048); // Align the size to the sectors
+	}
+	else {
+		aligned_size = size;
+	}
+	return aligned_size / 2048;
+}
