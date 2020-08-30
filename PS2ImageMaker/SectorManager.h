@@ -39,7 +39,7 @@ public:
 
 	template<typename T>
 	void write_sector(FILE* f, T* data, unsigned int size = sizeof(T));
-	void write_file(FILE* f, void* buf, long file_size);
+	void write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size);
 	void pad_sector(FILE* f, int padding_size);
 	unsigned int get_total_sectors();
 	long get_current_sector();

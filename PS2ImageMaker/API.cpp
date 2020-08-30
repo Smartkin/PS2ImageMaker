@@ -39,6 +39,7 @@ Progress progress_copy;
 bool progress_dirty;
 char game_path[1024];
 char dest_path[1024];
+unsigned int buffer_size = 32 * 1024 * 1024U; // By default use 64 MB of file buffer
 
 void pack(const char* game_path, const char* dest_path);
 void write_sectors(FILE* f, FileTree* ft);
@@ -80,6 +81,10 @@ extern "C" Progress* poll_progress() {
 		progress_dirty = false;
 	}
 	return &progress_copy;
+}
+
+extern "C" void set_file_buffer(unsigned int buffer_size) {
+	::buffer_size = buffer_size;
 }
 
 // Start the packing
@@ -1099,13 +1104,11 @@ void write_file_tree(SectorManager& sm, FILE* f) {
 	auto max_file = std::max_element(files.begin(), files.end(), [](FileTreeNode* n1, FileTreeNode* n2) {
 		return n1->file->GetSize() < n2->file->GetSize();
 	});
-	auto read_buf = new char[(*max_file)->file->GetSize()];
+	char* read_buf = new char[::buffer_size];
 	for (auto node : files) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
 		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
-		fread(read_buf, 1, node->file->GetSize(), in_f);
-		//in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
-		sm.write_file(f, read_buf, node->file->GetSize());
+		sm.write_file(f, in_f, read_buf, node->file->GetSize(), ::buffer_size);
 		
 	}
 	delete[] read_buf;
