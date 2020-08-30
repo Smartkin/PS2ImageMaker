@@ -93,26 +93,28 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	}
 }
 
-void SectorManager::write_file(std::ofstream& f, std::filebuf* buf, long file_size)
+void SectorManager::write_file(FILE* f, void* buf, long file_size)
 {
 	int sectors_needed = std::ceil(file_size / 2048.0);
 	current_sector += sectors_needed;
 
-	f << buf;
+	fwrite(buf, 1, file_size, f);
+	//f << buf;
 	if (file_size % 2048 != 0) {
 		// Pad the rest to keep being aligned
 		pad_sector(f, 2048 - file_size % 2048);
 	}
 }
 
-void SectorManager::pad_sector(std::ofstream& f, int padding_size)
+void SectorManager::pad_sector(FILE* f, int padding_size)
 {
 	// Pad to align the sector
 	auto pad = '\0';
 	auto leftover = padding_size;
-	for (int i = 0; i < leftover; ++i) {
+	/*for (int i = 0; i < leftover; ++i) {
 		f << pad;
-	}
+	}*/
+	fwrite(&pad, 1, leftover, f);
 }
 
 unsigned int SectorManager::get_total_sectors()

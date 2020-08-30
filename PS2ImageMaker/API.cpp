@@ -30,6 +30,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <map>
 #include <cassert>
+#include <stdio.h>
 
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
 std::mutex progress_mut;
@@ -40,8 +41,8 @@ char game_path[1024];
 char dest_path[1024];
 
 void pack(const char* game_path, const char* dest_path);
-void write_sectors(std::ofstream& f, FileTree* ft);
-void write_file_tree(SectorManager& sm, std::ofstream& f);
+void write_sectors(FILE* f, FileTree* ft);
+void write_file_tree(SectorManager& sm, FILE* f);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
 void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
@@ -59,7 +60,7 @@ struct ImageContext {
 	char iuea_free_impl[4] = { 0x61, 0x5, 0x0, 0x0 };
 	char iuea_cgms_impl[8] = { 0x49, 0x5, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
 };
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
+void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context);
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
@@ -91,8 +92,8 @@ void pack(const char* game_path, const char* dest_path) {
 		return;
 	}
 	update_progress(ProgressState::WRITE_SECTORS, 0.1);
-	std::ofstream image;
-	image.open(dest_path, std::ios_base::binary | std::ios_base::out);
+	FILE* image = fopen(dest_path, "wb+");
+	// image.open(dest_path, std::ios_base::binary | std::ios_base::out);
 	write_sectors(image, ft);
 	update_progress(ProgressState::FINISHED, 1.0, "", true);
 }
@@ -100,7 +101,7 @@ void pack(const char* game_path, const char* dest_path) {
 // All the writing for each sector is packed into this single function(for the most part) instead of having each sector to be in its separate function
 // biggest reason is because all sectors need a very strict ordering so instead of creating a seperate function for each
 // they are just divided into regions, additionally certain sector's data can depend on others
-void write_sectors(std::ofstream& f, FileTree* ft) {
+void write_sectors(FILE* f, FileTree* ft) {
 	SectorManager sm(ft);
 	const char pad = ' '; // For padding with spaces
 	auto sys_ident = "PLAYSTATION";
@@ -1089,16 +1090,20 @@ void write_sectors(std::ofstream& f, FileTree* ft) {
 	eos.alloc_desc2.log_block_num = 0x30;
 	fill_tag_checksum(eos_tag, &eos);
 	sm.write_sector(f, &eos);
+	fclose(f);
 }
 
-void write_file_tree(SectorManager& sm, std::ofstream& f) {
+void write_file_tree(SectorManager& sm, FILE* f) {
 	auto files = sm.get_files();
 	auto progress_increment = 0.8 / sm.get_total_files();
 	for (auto node : files) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
-		std::ifstream in_f;
-		in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
-		sm.write_file(f, in_f.rdbuf(), node->file->GetSize());
+		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
+		auto read_buf = new char[node->file->GetSize()];
+		fread(read_buf, 1, node->file->GetSize(), in_f);
+		//in_f.open(node->file->GetPath(), std::ios_base::in | std::ios_base::binary);
+		sm.write_file(f, read_buf, node->file->GetSize());
+		delete[] read_buf;
 	}
 }
 
@@ -1292,7 +1297,7 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 }
 
 // Helper function for writing File Entries for files
-void fill_file_fe(std::ofstream& f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context)
+void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_lba, ImageContext& context)
 {
 	auto files = sm.get_files();
 	for (auto file : files) {
