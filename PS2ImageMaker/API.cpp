@@ -161,7 +161,10 @@ void write_sectors(FILE* f, FileTree* ft) {
 	root_rec.loc_of_ext_lsb = 261;
 	root_rec.loc_of_ext_msb = changeEndianness32(261);
 	// These are actually supposed to be calculated but I couldn't find out the exact algo but it works out if it's just set to the entire logical block size
-	auto root_len = LOG_BLOCK_SIZE;
+	auto root_len = 0x30 * 2U;
+	for (auto node : ft->tree) {
+		root_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+	}
 	root_rec.data_len_lsb = root_len;
 	root_rec.data_len_msb = changeEndianness32(root_len);
 	// Hardcoding to some random date because who cares lmao
@@ -611,21 +614,21 @@ void write_sectors(FILE* f, FileTree* ft) {
 	for (int i = 0; i < directories; ++i) {
 		auto needed_memory = 96; // Amount of needed memory for a sector
 		auto index = 0;
-		auto dir_len = 0x800;// 0x30 * 2U;
+		auto dir_len = 0x30 * 2U;
 		// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 		if (cur_dir != nullptr) {
-			/*for (auto node : cur_tree->tree) {
-				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}*/
+			for (auto node : cur_tree->tree) {
+				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+			}
 			nav_this.data_len_lsb = dir_len;
 			nav_this.data_len_msb = changeEndianness32(dir_len);
 			nav_this.loc_of_ext_lsb = sm.get_file_sector(cur_dir);
 			nav_this.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir));
 			if (cur_dir->parent != nullptr) {
-				auto par_dir_len = 0x800;/*0x30 * 2U;
+				auto par_dir_len = 0x30 * 2U;
 				for (auto node : cur_dir->parent->next->tree) {
-					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}*/
+					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				}
 				nav_prev.data_len_lsb = par_dir_len;
 				nav_prev.data_len_msb = changeEndianness32(par_dir_len);
 				nav_prev.loc_of_ext_lsb = sm.get_file_sector(cur_dir->parent);
@@ -649,14 +652,14 @@ void write_sectors(FILE* f, FileTree* ft) {
 			if (node->file->IsDirectory() && cur_dir == nullptr) {
 				auto file = node->file;
 				DirectoryRecord& rec = dir_rec[index++];
-				rec.dir_rec_len = 48 + file->GetName().size() + file->GetName().size() % 2;
+				rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
 				needed_memory += rec.dir_rec_len;
 				rec.loc_of_ext_lsb = sm.get_file_sector(node);
 				rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-				auto rec_len = 0x800;/*0x30 * 2U;
+				auto rec_len = 0x30 * 2U;
 				for (auto node : node->next->tree) {
-					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-				}*/
+					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				}
 				rec.data_len_lsb = rec_len;
 				rec.data_len_msb = changeEndianness32(rec_len);
 				rec.red_date_and_time[0] = 120;
@@ -690,7 +693,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		for (auto node : file_buf) {
 			auto file = node->file;
 			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 50 + file->GetName().size() + file->GetName().size() % 2;
+			rec.dir_rec_len = 50 + file->GetName().size() - file->GetName().size() % 2;
 			needed_memory += rec.dir_rec_len;
 			rec.loc_of_ext_lsb = sm.get_file_sector(node);
 			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
@@ -718,14 +721,14 @@ void write_sectors(FILE* f, FileTree* ft) {
 		for (auto node : dir_buf) {
 			auto file = node->file;
 			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 48 + file->GetName().size() + file->GetName().size() % 2;
+			rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
 			needed_memory += rec.dir_rec_len;
 			rec.loc_of_ext_lsb = sm.get_file_sector(node);
 			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-			auto rec_len = 0x800;/*0x30 * 2U;
+			auto rec_len = 0x30 * 2U;
 			for (auto node : node->next->tree) {
-				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32);
-			}*/
+				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+			}
 			rec.data_len_lsb = rec_len;
 			rec.data_len_msb = changeEndianness32(rec_len);
 			rec.red_date_and_time[0] = 120;
