@@ -39,7 +39,7 @@ Progress progress_copy;
 bool progress_dirty;
 char game_path[1024];
 char dest_path[1024];
-unsigned int buffer_size = 32 * 1024 * 1024U; // By default use 64 MB of file buffer
+unsigned int buffer_size = 32 * 1024 * 1024U; // By default use 32 MB of memory map page
 
 void pack(const char* game_path, const char* dest_path);
 void write_sectors(HANDLE f, FileTree* ft);
@@ -65,9 +65,6 @@ void fill_file_fe(HANDLE f, SectorManager& sm, ulong unique_id, ushort cur_spec_
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
-	SYSTEM_INFO sys_info;
-	GetSystemInfo(&sys_info);
-	printf("System granularity %d", sys_info.dwAllocationGranularity);
 	// Copy over the received strings
 	strncpy(::game_path, game_path, strlen(game_path));
 	::game_path[strlen(game_path)] = '\0';
@@ -100,7 +97,7 @@ void pack(const char* game_path, const char* dest_path) {
 		return;
 	}
 	update_progress(ProgressState::WRITE_SECTORS, 0.1);
-	HANDLE image = CreateFileA(dest_path, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);//fopen(dest_path, "wb+");
+	HANDLE image = CreateFileA(dest_path, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
 	write_sectors(image, ft);
 	CloseHandle(image);
 	update_progress(ProgressState::FINISHED, 1.0, "", true);
@@ -1109,15 +1106,12 @@ void write_file_tree(SectorManager& sm, HANDLE f) {
 	auto max_file = std::max_element(files.begin(), files.end(), [](FileTreeNode* n1, FileTreeNode* n2) {
 		return n1->file->GetSize() < n2->file->GetSize();
 	});
-	char* read_buf = new char[::buffer_size];
 	for (auto node : files) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
-		HANDLE in_f = CreateFileA(node->file->GetPath().c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);//fopen(node->file->GetPath().c_str(), "rb");
-		sm.write_file(f, in_f, read_buf, node->file->GetSize(), ::buffer_size);
-		//fclose(in_f);
+		HANDLE in_f = CreateFileA(node->file->GetPath().c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+		sm.write_file(f, in_f, node->file->GetSize(), ::buffer_size);
 		CloseHandle(in_f);
 	}
-	delete[] read_buf;
 }
 
 void update_progress(ProgressState state, float progress, const char* file_name, bool finished) {

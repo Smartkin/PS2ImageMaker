@@ -57,21 +57,12 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	unsigned int data_sec = this->data_sector;
 	unsigned int data_lba = dir_lba - 1 + this->directories_amount;
 	unsigned int file_local_sector = this->data_sector - 261 - this->directories_amount;
-	//this->files.push_back(nullptr); // Allocate space for System.cnf
 	for (auto i = 0; i < this->directories_amount; ++i) {
 		for (auto node : cur_tree->tree) {
 			if (!node->file->IsDirectory()) {
 				auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
 					return p.first == node;
 				});
-				/*if (!strcmp("System.cnf", node->file->GetName().c_str())) {
-					this->files.erase(this->files.begin());
-					this->files.insert(this->files.begin(), node);
-					(*vec_iter).second.global_sector = data_sector + 1;
-					(*vec_iter).second.lba = 7 + this->directories_amount;
-					(*vec_iter).second.local_sector = data_sector - 261 - this->directories_amount;
-					continue;
-				}*/
 				this->files.push_back(node);
 				(*vec_iter).second.global_sector = data_sec;
 				(*vec_iter).second.lba = data_lba++;
@@ -93,24 +84,34 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	}
 }
 
-void SectorManager::write_file(HANDLE out_f, HANDLE in_f, void* buf, long file_size, long buffer_size)
+void SectorManager::write_file(HANDLE out_f, HANDLE in_f, long file_size, long buffer_size)
 {
 	int sectors_needed = std::ceil(file_size / 2048.0);
 	current_sector += sectors_needed;
 	auto write_left = file_size;
+	SYSTEM_INFO sys_info;
+	GetSystemInfo(&sys_info);
+	auto page_size = sys_info.dwAllocationGranularity;
+	if (buffer_size % page_size != 0) { // Align to allocation granularity
+		buffer_size += (page_size - buffer_size % page_size);
+	}
+	auto file_map = CreateFileMappingA(in_f, NULL, PAGE_READWRITE, 0, 0, NULL);
+	DWORD offset = 0;
 
 	while (write_left > 0) {
 		auto write_size = buffer_size;
 		if (write_size > write_left) {
 			write_size = write_left;
 		}
-		//fread(buf, 1, write_size, in_f);
-		//fwrite(buf, 1, write_size, out_f);
 		DWORD size_written = 0;
-		ReadFile(in_f, buf, write_size, &size_written, NULL);
-		WriteFile(out_f, buf, write_size, &size_written, NULL);
+		// Using memory mapping for maximum speed
+		auto map_view = MapViewOfFile(file_map, FILE_MAP_READ, 0, offset, write_size);
+		WriteFile(out_f, map_view, write_size, &size_written, NULL);
+		UnmapViewOfFile(map_view);
+		offset += page_size;
 		write_left -= write_size;
 	}
+	CloseHandle(file_map);
 
 	if (file_size % 2048 != 0) {
 		// Pad the rest to keep being aligned

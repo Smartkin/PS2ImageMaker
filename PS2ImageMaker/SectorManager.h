@@ -27,7 +27,7 @@ struct FileTreeNode;
 
 struct FileLocation {
 	unsigned int global_sector; // starting from the top of the disc
-	unsigned int local_sector; // specific to files which is their global sector - sector number of the FileSetDescriptor
+	unsigned int local_sector; // specific to files which is their (global sector - sector number of the FileSetDescriptor)
 	unsigned int lba; // starting from FileIdentifierDescriptor sector
 };
 
@@ -39,7 +39,7 @@ public:
 
 	template<typename T>
 	void write_sector(HANDLE f, T* data, unsigned int size = sizeof(T));
-	void write_file(HANDLE out_f, HANDLE in_f, void* buf, long file_size, long buffer_size);
+	void write_file(HANDLE out_f, HANDLE in_f, long file_size, long buffer_size);
 	void pad_sector(HANDLE f, int padding_size);
 	unsigned int get_total_sectors();
 	long get_current_sector();
