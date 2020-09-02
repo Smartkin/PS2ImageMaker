@@ -16,10 +16,12 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
+#include "pch.h"
 #include <Windows.h>
 #include <vector>
-#include "pch.h"
+#include <cmath>
 #include "Directory.h"
+#include "SectorDescriptors.h"
 #include "File.h"
 #include "API.h"
 
@@ -135,6 +137,36 @@ unsigned int FileTree::get_files_size()
 	}
 }
 
+unsigned int FileTree::get_directory_records_amount()
+{
+	unsigned int amount = 0;
+	auto dir_rec_len = 0x60;
+	for (auto node : this->tree) {
+		if (node->file->IsDirectory()) {
+			_get_directory_records_amount(node, amount);
+		}
+		dir_rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+	}
+	amount += std::ceil(dir_rec_len / 2048.0);
+	return amount;
+}
+
+unsigned int FileTree::get_file_identifiers_amount()
+{
+	unsigned int amount = 0;
+	auto file_ident_len = sizeof(FileIdentifierDescriptor);
+	for (auto node : this->tree) {
+		if (node->file->IsDirectory()) {
+			_get_file_identifiers_amount(node, amount);
+		}
+		auto file_name_size = node->file->GetName().size();
+		auto file_str_len = file_name_size * 2 + 1;
+		file_ident_len += sizeof(FileIdentifierDescriptor) - 1 + file_str_len + (file_name_size % 2) * 2;
+	}
+	amount += std::ceil(file_ident_len / 2048.0);
+	return amount;
+}
+
 void FileTree::_get_dir_amount(FileTreeNode* node, long& amount)
 {
 	for (auto node : node->next->tree) {
@@ -172,4 +204,42 @@ void FileTree::_get_files_size(FileTreeNode* node, unsigned int& size)
 			}
 		}
 	}
+}
+
+void FileTree::_get_directory_records_amount(FileTreeNode* node, unsigned int& amount)
+{
+	auto dir_rec_len = 0x60;
+	for (auto node : node->next->tree) {
+		if (node->file->IsDirectory()) {
+			_get_directory_records_amount(node, amount);
+		}
+		dir_rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+	}
+	amount += std::ceil(dir_rec_len / 2048.0);
+}
+
+void FileTree::_get_file_identifiers_amount(FileTreeNode* node, unsigned int& amount)
+{
+	auto file_ident_len = sizeof(FileIdentifierDescriptor);
+	for (auto node : node->next->tree) {
+		if (node->file->IsDirectory()) {
+			_get_file_identifiers_amount(node, amount);
+		}
+		auto file_name_size = node->file->GetName().size();
+		auto file_str_len = file_name_size * 2 + 1;
+		file_ident_len += sizeof(FileIdentifierDescriptor) - 1 + file_str_len + (file_name_size % 2) * 2;
+	}
+	amount += std::ceil(file_ident_len / 2048.0);
+}
+
+unsigned int FileTreeNode::get_directory_records_space()
+{
+	unsigned int space = 0;
+	if (this->file->IsDirectory()) {
+		space = 0x60;
+		for (auto node : this->next->tree) {
+			space += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+		}
+	}
+	return std::ceil(space / 2048.0);
 }
