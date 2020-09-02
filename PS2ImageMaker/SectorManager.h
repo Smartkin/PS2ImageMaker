@@ -38,9 +38,9 @@ public:
 	SectorManager(FileTree* ft);
 
 	template<typename T>
-	void write_sector(FILE* f, T* data, unsigned int size = sizeof(T));
-	void write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size);
-	void pad_sector(FILE* f, int padding_size);
+	void write_sector(HANDLE f, T* data, unsigned int size = sizeof(T));
+	void write_file(HANDLE out_f, HANDLE in_f, void* buf, long file_size, long buffer_size);
+	void pad_sector(HANDLE f, int padding_size);
 	unsigned int get_total_sectors();
 	long get_current_sector();
 	unsigned int get_partition_start_sector();
@@ -70,14 +70,16 @@ private:
 };
 
 template<typename T>
-inline void SectorManager::write_sector(FILE* f, T* data, unsigned int size)
+inline void SectorManager::write_sector(HANDLE f, T* data, unsigned int size)
 {
 	if (size > 2048) {
 		throw std::exception("Can't write to sector more than sector's size");
 	}
 	
 	// Write the data
-	fwrite(data, 1, size, f);
+	DWORD size_written = 0;
+	WriteFile(f, data, size, &size_written, NULL);
+	//fwrite(data, 1, size, f);
 	//f.write(reinterpret_cast<char*>(data), size);
 
 

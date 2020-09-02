@@ -93,7 +93,7 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	}
 }
 
-void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size)
+void SectorManager::write_file(HANDLE out_f, HANDLE in_f, void* buf, long file_size, long buffer_size)
 {
 	int sectors_needed = std::ceil(file_size / 2048.0);
 	current_sector += sectors_needed;
@@ -104,8 +104,11 @@ void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_siz
 		if (write_size > write_left) {
 			write_size = write_left;
 		}
-		fread(buf, 1, write_size, in_f);
-		fwrite(buf, 1, write_size, out_f);
+		//fread(buf, 1, write_size, in_f);
+		//fwrite(buf, 1, write_size, out_f);
+		DWORD size_written = 0;
+		ReadFile(in_f, buf, write_size, &size_written, NULL);
+		WriteFile(out_f, buf, write_size, &size_written, NULL);
 		write_left -= write_size;
 	}
 
@@ -115,14 +118,12 @@ void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_siz
 	}
 }
 
-void SectorManager::pad_sector(FILE* f, int padding_size)
+void SectorManager::pad_sector(HANDLE f, int padding_size)
 {
 	// Pad to align the sector
-	auto pad = '\0';
-	auto leftover = padding_size;
-	for (int i = 0; i < leftover; ++i) {
-		fwrite(&pad, 1, 1, f);
-	}
+	auto pad = new char[padding_size]();
+	DWORD size_written = 0;
+	WriteFile(f, pad, padding_size, &size_written, NULL);
 }
 
 unsigned int SectorManager::get_total_sectors()
