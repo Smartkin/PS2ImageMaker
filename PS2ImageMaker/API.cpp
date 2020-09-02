@@ -1112,7 +1112,7 @@ void write_file_tree(SectorManager& sm, FILE* f) {
 		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
 		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
 		sm.write_file(f, in_f, read_buf, node->file->GetSize(), ::buffer_size);
-		
+		fclose(in_f);
 	}
 	delete[] read_buf;
 }
