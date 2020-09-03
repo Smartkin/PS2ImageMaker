@@ -29,6 +29,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <algorithm>
 #include <map>
+#include <regex>
 #include <cassert>
 #include <stdio.h>
 
@@ -46,7 +47,7 @@ void write_sectors(FILE* f, FileTree* ft);
 void write_file_tree(SectorManager& sm, FILE* f);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
-void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
+void fill_path_table(SectorManager& sm, char* buffer, FileTree* ft, bool msb = false);
 unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 template<typename T>
 void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
@@ -557,12 +558,12 @@ void write_sectors(FILE* f, FileTree* ft) {
 	memset(path_table_buffer, 0, ptz);
 
 	// Write path table L and option L
-	fill_path_table(path_table_buffer, ft);
+	fill_path_table(sm, path_table_buffer, ft);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 
 	// Write path table M and option M
-	fill_path_table(path_table_buffer, ft, true);
+	fill_path_table(sm, path_table_buffer, ft, true);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	free(path_table_buffer);
@@ -593,7 +594,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	nav_this.file_ident = '\0';
 	DirectoryRecord nav_prev;
 	nav_prev.dir_rec_len = 48;
-	nav_prev.loc_of_ext_lsb = 261;
+	nav_prev.loc_of_ext_lsb = 261; // Root is parent of root so we nav back to root
 	nav_prev.loc_of_ext_msb = changeEndianness32(261);
 	nav_prev.data_len_lsb = root_len;
 	nav_prev.data_len_msb = changeEndianness32(root_len);
@@ -843,7 +844,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		for (auto node : cur_tree->tree) {
 			if (node->file->IsDirectory() && cur_dir == nullptr) {
 				needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
-				if (std::ceil(needed_memory / 2048.0) > needed_sectors) { // Sector overflowing
+				if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
 					cur_spec_lba++;
 					needed_sectors++;
 				}
@@ -853,7 +854,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 			}
 			else {
 				needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
-				if (std::ceil(needed_memory / 2048.0) > needed_sectors) { // Sector overflowing
+				if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
 					cur_spec_lba++;
 					needed_sectors++;
 				}
@@ -863,7 +864,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		// Fill in the files
 		for (auto file : files) {
 			needed_memory += fill_fid(sm, file_idents[index++], file, cur_spec_lba, buffers);
-			if (std::ceil(needed_memory / 2048.0) > needed_sectors) { // Sector overflowing
+			if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
 				cur_spec_lba++;
 				needed_sectors++;
 			}
@@ -992,7 +993,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		fe.record_disp_attrib = 0;
 		fe.record_len = 0;
 		fe.info_len = dir_file_ident_size_map.at(dir->next);
-		fe.log_blocks_rec = dir->get_directory_records_space();
+		fe.log_blocks_rec = std::ceil(fe.info_len / 2048.0);
 		fe.access_time = twins_creation_time;
 		fe.mod_time = twins_creation_time;
 		fe.attrib_time = twins_creation_time;
@@ -1026,7 +1027,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		strncpy((char*)fe.iuea_udf_cgms.impl_use, iuea_cgms_impl, 8);
 		fe.alloc_desc.info_len = fe.info_len; // Size of file identifier descriptor for folders, size of file for files
 		fe.alloc_desc.log_block_num = log_block_num; // Always 2 for root, local sector for files
-		log_block_num += dir->get_directory_records_space();
+		log_block_num += fe.log_blocks_rec;
 		fill_tag_checksum(fe_tag, &fe);
 		sm.write_sector<FileEntry>(f, &fe);
 		cur_spec_lba++;
@@ -1133,12 +1134,11 @@ void pad_string(char* str, int offset, int size, const char pad) {
 }
 
 // Offset and start_lba are changing due to their constant calling, yeah yeah C-like code in C++ shut up :P
-void _fill_path_table(char* buffer, FileTreeNode* node, int& offset, uint& start_lba, ushort par_index, bool msb) {
+void _fill_path_table(char* buffer, FileTreeNode* node, int& offset, uint start_lba, ushort par_index, bool msb) {
 	buffer[offset++] = node->file->GetName().size();
 	buffer[offset++] = 0;
 	uint* lba = (uint*)(buffer + offset);
 	*lba = msb ? changeEndianness32(start_lba) : start_lba;
-	start_lba += node->get_directory_records_space();
 	offset += 4;
 	ushort par_dir_num = msb ? changeEndianness16(par_index) : par_index;
 	ushort* par_dir_num_ptr = (ushort*)(buffer + offset);
@@ -1172,7 +1172,7 @@ void _explore_tree(FileTreeNode* node, std::vector<DirectoryDepth>& vec, int dep
 	}
 }
 
-void fill_path_table(char* buffer, FileTree* ft, bool msb) {
+void fill_path_table(SectorManager& sm, char* buffer, FileTree* ft, bool msb) {
 	// Fill in the root table
 	buffer[0] = 1; // Ident len
 	buffer[1] = 0; // ext_rec_attrib_len
@@ -1201,10 +1201,23 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 	}
 	// Sort by depth
 	std::sort(depths.begin(), depths.end(), [](DirectoryDepth& dir1, DirectoryDepth& dir2) {
-		auto dir1_path = dir1.node->file->GetPath().c_str();
-		auto dir2_path = dir2.node->file->GetPath().c_str();
-		auto path_part = strtok(dir1_path, "/\\");
-		return dir1.depth == dir2.depth && strcmp(dir1.node->file->GetPath().c_str(), dir2.node->file->GetPath().c_str()) < 0;
+		auto dir1_path = dir1.node->file->GetPath();
+		auto dir2_path = dir2.node->file->GetPath();
+
+		if (dir1.depth == dir2.depth) {
+			std::regex regexp("[\\\\/]");
+			std::sregex_token_iterator dir1_match(dir1_path.begin(), dir1_path.end(), regexp, -1);
+			std::sregex_token_iterator dir2_match(dir2_path.begin(), dir2_path.end(), regexp, -1);
+			std::sregex_token_iterator end;
+			while (dir1_match != end && dir2_match != end) {
+				if (strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) != 0) {
+					return strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) < 0;
+				}
+				dir1_match++;
+				dir2_match++;
+			}
+		}
+		return dir1.depth < dir2.depth;
 	});
 	// Map node's children to a parent index
 	if (depths.size() != 0) {
@@ -1224,9 +1237,8 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 	// Fill table based on depth
 	if (depths.size() != 0) {
 		int offset = 10;
-		uint init_lba = 262;
 		for (const auto& depth : depths) {
-			_fill_path_table(buffer, depth.node, offset, init_lba, par_index_map.at(depth.node), msb);
+			_fill_path_table(buffer, depth.node, offset, sm.get_file_sector(depth.node), par_index_map.at(depth.node), msb);
 		}
 	}
 }

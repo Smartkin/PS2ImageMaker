@@ -31,6 +31,7 @@ struct FileTreeNode {
 	int depth;
 	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0), links(1) {}
 	unsigned int get_directory_records_space();
+	unsigned int get_file_identifiers_space();
 };
 
 struct FileTree {

@@ -243,3 +243,17 @@ unsigned int FileTreeNode::get_directory_records_space()
 	}
 	return std::ceil(space / 2048.0);
 }
+
+unsigned int FileTreeNode::get_file_identifiers_space()
+{
+	unsigned int space = 0;
+	if (this->file->IsDirectory()) {
+		space = 0x60;
+		for (auto node : this->next->tree) {
+			auto file_name_size = node->file->GetName().size();
+			auto file_str_len = file_name_size * 2 + 1;
+			space += sizeof(FileIdentifierDescriptor) - 1 + file_str_len + (file_name_size % 2) * 2;
+		}
+	}
+	return std::ceil(space / 2048.0);
+}
