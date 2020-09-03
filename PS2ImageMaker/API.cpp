@@ -29,6 +29,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <algorithm>
 #include <map>
+#include <regex>
 #include <cassert>
 #include <stdio.h>
 
@@ -46,10 +47,11 @@ void write_sectors(FILE* f, FileTree* ft);
 void write_file_tree(SectorManager& sm, FILE* f);
 unsigned int get_path_table_size(FileTree* ft);
 void pad_string(char* str, int offset, int size, const char pad = ' ');
-void fill_path_table(char* buffer, FileTree* ft, bool msb = false);
+void fill_path_table(SectorManager& sm, char* buffer, FileTree* ft, bool msb = false);
 unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeNode* node, unsigned int cur_spec_lba, std::vector<std::pair<char*, unsigned int>>& buffers);
 template<typename T>
 void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size = sizeof(T));
+void fill_directory_record(SectorManager& sm, FileTreeNode* node, DirectoryRecord* dir_rec, std::vector<std::string>& file_names_buf, int& index, int& needed_memory);
 
 // Helper struct to pass to the fill file entry function
 struct ImageContext {
@@ -254,7 +256,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	auto udf_free_ea = "*UDF FreeEASpace";
 	auto udf_cgms_info = "*UDF DVD CGMS Info";
 	char compID = 0x8; // Compression ID of 8
-	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended, I haven't managed to figure out the exact algorithm to calculate this so currently it's just hardcoded to a date
+	auto encoded_date = "=0<58115SCEI"; // This is an encoded date of 11:35AM 24/08/2020 with SCEI appended, I haven't managed to figure out the exact algorithm to calculate this so currently it's just hardcoded
 	char id_suff[3] = { 0x2, 0x1, 0x3 }; // This is special identifier suffix bytes that are written for certain identifiers
 	Timestamp twins_creation_time; // Just use date and time whenever Twinsanity PAL was released
 	twins_creation_time.microseconds = 0;
@@ -556,12 +558,12 @@ void write_sectors(FILE* f, FileTree* ft) {
 	memset(path_table_buffer, 0, ptz);
 
 	// Write path table L and option L
-	fill_path_table(path_table_buffer, ft);
+	fill_path_table(sm, path_table_buffer, ft);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 
 	// Write path table M and option M
-	fill_path_table(path_table_buffer, ft, true);
+	fill_path_table(sm, path_table_buffer, ft, true);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	sm.write_sector<char>(f, path_table_buffer, ptz);
 	free(path_table_buffer);
@@ -592,7 +594,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	nav_this.file_ident = '\0';
 	DirectoryRecord nav_prev;
 	nav_prev.dir_rec_len = 48;
-	nav_prev.loc_of_ext_lsb = 261;
+	nav_prev.loc_of_ext_lsb = 261; // Root is parent of root so we nav back to root
 	nav_prev.loc_of_ext_msb = changeEndianness32(261);
 	nav_prev.data_len_lsb = root_len;
 	nav_prev.data_len_msb = changeEndianness32(root_len);
@@ -615,10 +617,16 @@ void write_sectors(FILE* f, FileTree* ft) {
 		auto needed_memory = 96; // Amount of needed memory for a sector
 		auto index = 0;
 		auto dir_len = 0x30 * 2U;
+		auto section = 1;
 		// Recalculate the data len of the current directory tree for nav dirs as well as set their new LBA
 		if (cur_dir != nullptr) {
 			for (auto node : cur_tree->tree) {
-				dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				auto next_len = node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+				if (dir_len + next_len > 2048 * section) { // Pad to 2048
+					dir_len += (2048 - dir_len % 2048);
+					section++;
+				}
+				dir_len += next_len;
 			}
 			nav_this.data_len_lsb = dir_len;
 			nav_this.data_len_msb = changeEndianness32(dir_len);
@@ -626,8 +634,14 @@ void write_sectors(FILE* f, FileTree* ft) {
 			nav_this.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(cur_dir));
 			if (cur_dir->parent != nullptr) {
 				auto par_dir_len = 0x30 * 2U;
+				auto section = 1;
 				for (auto node : cur_dir->parent->next->tree) {
-					par_dir_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+					auto next_len = node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
+					if (par_dir_len + next_len > 2048 * section) { // Pad to 2048
+						par_dir_len += (2048 - par_dir_len % 2048);
+						section++;
+					}
+					par_dir_len += next_len;
 				}
 				nav_prev.data_len_lsb = par_dir_len;
 				nav_prev.data_len_msb = changeEndianness32(par_dir_len);
@@ -646,115 +660,39 @@ void write_sectors(FILE* f, FileTree* ft) {
 		DirectoryRecord* dir_rec = new DirectoryRecord[cur_tree->tree.size()];
 		std::vector<std::string> file_names_buf;
 		std::vector<FileTreeNode*> file_buf;
-		std::vector<FileTreeNode*> dir_buf;
+		//std::vector<FileTreeNode*> dir_buf;
 		for (auto node : cur_tree->tree) {
 			// Need to process directories in root first, kick files in a buffer for now
 			if (node->file->IsDirectory() && cur_dir == nullptr) {
-				auto file = node->file;
-				DirectoryRecord& rec = dir_rec[index++];
-				rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
-				needed_memory += rec.dir_rec_len;
-				rec.loc_of_ext_lsb = sm.get_file_sector(node);
-				rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-				auto rec_len = 0x30 * 2U;
-				for (auto node : node->next->tree) {
-					rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
-				}
-				rec.data_len_lsb = rec_len;
-				rec.data_len_msb = changeEndianness32(rec_len);
-				rec.red_date_and_time[0] = 120;
-				rec.red_date_and_time[1] = 8;
-				rec.red_date_and_time[2] = 25;
-				rec.red_date_and_time[3] = 11;
-				rec.red_date_and_time[4] = 30;
-				rec.red_date_and_time[5] = '\0';
-				rec.red_date_and_time[6] = '\0';
-				rec.flags = 2;
-				rec.vol_seq_num_lsb = 1;
-				rec.vol_seq_num_msb = changeEndianness16(1);
-				rec.file_ident_len = file->GetName().size();
-				rec.file_ident = '\0'; // These are set in memory directly
-				auto f_name = file->GetName();
-				auto _pad = '\0';
-				if (rec.file_ident_len % 2 != 0) f_name.append(&_pad);
-				std::transform(f_name.begin(), f_name.end(), f_name.begin(), ::toupper);
-				file_names_buf.push_back(f_name);
+				fill_directory_record(sm, node, dir_rec, file_names_buf, index, needed_memory);
 			}
-			else if (node->file->IsDirectory()) {
+			/*else if (node->file->IsDirectory()) {
 				dir_buf.push_back(node);
-			}
-			else {
+			}*/
+			else if (cur_dir == nullptr) {
 				file_buf.push_back(node);
 			}
+			else {
+				fill_directory_record(sm, node, dir_rec, file_names_buf, index, needed_memory);
+			}
 		}
-		auto a = 0;
-		a++;
+
 		// Fill in the files
 		for (auto node : file_buf) {
-			auto file = node->file;
-			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 50 + file->GetName().size() - file->GetName().size() % 2;
-			needed_memory += rec.dir_rec_len;
-			rec.loc_of_ext_lsb = sm.get_file_sector(node);
-			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-			rec.data_len_lsb = file->GetSize();
-			rec.data_len_msb = changeEndianness32(file->GetSize());
-			rec.red_date_and_time[0] = 120;
-			rec.red_date_and_time[1] = 8;
-			rec.red_date_and_time[2] = 25;
-			rec.red_date_and_time[3] = 11;
-			rec.red_date_and_time[4] = 30;
-			rec.red_date_and_time[5] = '\0';
-			rec.red_date_and_time[6] = '\0';
-			rec.flags = 0;
-			rec.vol_seq_num_lsb = 1;
-			rec.vol_seq_num_msb = changeEndianness16(1);
-			rec.file_ident_len = file->GetName().size() + 2;
-			rec.file_ident = '\0'; // These are set in memory directly
-			auto f_name = file->GetName().append(";1");
-			auto _pad = '\0';
-			if (rec.file_ident_len % 2 != 0) f_name.append(&_pad);
-			std::transform(f_name.begin(), f_name.end(), f_name.begin(), ::toupper);
-			file_names_buf.push_back(f_name);
+			fill_directory_record(sm, node, dir_rec, file_names_buf, index, needed_memory);
 		}
 		// In every other folder than root fill directories last
-		for (auto node : dir_buf) {
-			auto file = node->file;
-			DirectoryRecord& rec = dir_rec[index++];
-			rec.dir_rec_len = 48 + file->GetName().size() - file->GetName().size() % 2;
-			needed_memory += rec.dir_rec_len;
-			rec.loc_of_ext_lsb = sm.get_file_sector(node);
-			rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
-			auto rec_len = 0x30 * 2U;
-			for (auto node : node->next->tree) {
-				rec_len += node->file->GetName().size() + (node->file->IsDirectory() ? 0x30 : 0x32) - node->file->GetName().size() % 2;
-			}
-			rec.data_len_lsb = rec_len;
-			rec.data_len_msb = changeEndianness32(rec_len);
-			rec.red_date_and_time[0] = 120;
-			rec.red_date_and_time[1] = 8;
-			rec.red_date_and_time[2] = 25;
-			rec.red_date_and_time[3] = 11;
-			rec.red_date_and_time[4] = 30;
-			rec.red_date_and_time[5] = '\0';
-			rec.red_date_and_time[6] = '\0';
-			rec.flags = 2;
-			rec.vol_seq_num_lsb = 1;
-			rec.vol_seq_num_msb = changeEndianness16(1);
-			rec.file_ident_len = file->GetName().size();
-			rec.file_ident = '\0'; // These are set in memory directly
-			auto f_name = file->GetName();
-			auto _pad = '\0';
-			if (rec.file_ident_len % 2 != 0) f_name.append(&_pad);
-			std::transform(f_name.begin(), f_name.end(), f_name.begin(), ::toupper);
-			file_names_buf.push_back(f_name);
-		}
+		/*for (auto node : dir_buf) {
+			fill_directory_record(sm, node, dir_rec, file_names_buf, index, needed_memory);
+		}*/
 
 		// If a single directory needs more than one sector for elements then I am sorry but you kinda gonna have to create a child directory :^)
-		assert(needed_memory < 2048);
+		//assert(needed_memory < 2048);
+		size_t needed_sectors = std::ceil(needed_memory / 2048.0);
 
 		// Write the records to memory
-		char* buffer = (char*)malloc(needed_memory);
+		char* buffer = (char*)malloc(needed_sectors * 2048);
+		memset(buffer, 0, needed_sectors * 2048); // Init the mem to 0
 		int offset = 0;
 		// Write nav dir this
 		memcpy(buffer, &nav_this, sizeof(DirectoryRecord));
@@ -766,6 +704,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		offset += sizeof(DirectoryRecord);
 		memset(buffer + offset, 0, nav_prev.dir_rec_len - sizeof(DirectoryRecord));
 		offset += nav_prev.dir_rec_len - sizeof(DirectoryRecord);
+		int prev_sec = 0;
 		for (int j = 0; j < cur_tree->tree.size(); ++j) {
 			DirectoryRecord& rec = dir_rec[j];
 			// Write the header without the string
@@ -776,14 +715,25 @@ void write_sectors(FILE* f, FileTree* ft) {
 			offset += rec.file_ident_len;
 			memset(buffer + offset, 0, rec.dir_rec_len - sizeof(DirectoryRecord) + 1 - rec.file_ident_len);
 			offset += rec.dir_rec_len - sizeof(DirectoryRecord) + 1 - rec.file_ident_len;
+			// Check if this isn't the last record and we don't have enough space for next record
+			if (j != cur_tree->tree.size() - 1 && (offset + dir_rec[j + 1].dir_rec_len) / 2048 > prev_sec) {
+				prev_sec = (offset + dir_rec[j + 1].dir_rec_len) / 2048;
+				// Pad the remaining bytes and move to the next sector
+				memset(buffer + offset, 0, 2048 * prev_sec - offset);
+				needed_memory += 2048 * prev_sec - offset;
+				offset += 2048 * prev_sec - offset;
+			}
 		}
 
 		if (needed_memory - offset > 0) {
 			memset(buffer + offset, 0, needed_memory - offset);
+			printf("WARNING: LEFTOVER MEMORY AMOUNT %d\n", offset);
 		}
 
 		// Write the sector and free the memory
-		sm.write_sector<char>(f, buffer, needed_memory);
+		for (size_t j = 0; j < needed_sectors; ++j) {
+			sm.write_sector<char>(f, buffer + j * 2048, 2048);
+		}
 		free(buffer);
 		delete[] dir_rec;
 
@@ -831,7 +781,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	pad_string(fs.abstr_file_ident, 0, 32, '\0');
 	fs.root_dir_icb.extent_len = 0x13C;
 	fs.root_dir_icb.extent_loc.part_ref_num = 0;
-	fs.root_dir_icb.extent_loc.log_block_num = 2 + sm.get_total_directories(); // This is the amount of sectors past this descriptor
+	fs.root_dir_icb.extent_loc.log_block_num = 2 + ft->get_file_identifiers_amount(); // This is the amount of sectors past this descriptor
 	pad_string((char*)fs.root_dir_icb.impl_use, 0, 6, '\0');
 	fs.domain_ident.flags = 0;
 	strncpy(fs.domain_ident.ident, osta_complient, strlen(osta_complient));
@@ -867,7 +817,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	fi_root.file_chars = 0xA;
 	fi_root.len_of_file_ident = 0;
 	fi_root.icb.extent_len = 0x13C;
-	fi_root.icb.extent_loc.log_block_num = cur_spec_lba + directories; // The only part that changes for root FID in other directories, also its tag CRC
+	fi_root.icb.extent_loc.log_block_num = cur_spec_lba + ft->get_file_identifiers_amount(); // The only part that changes for root FID in other directories, also its tag CRC
 	fi_root.icb.extent_loc.part_ref_num = 0;
 	pad_string((char*)fi_root.icb.impl_use, 0, 6, '\0');
 	fi_root.len_of_impl_use = 0;
@@ -887,37 +837,49 @@ void write_sectors(FILE* f, FileTree* ft) {
 		int index = 0;
 		FileIdentifierDescriptor* file_idents = new FileIdentifierDescriptor[cur_tree->tree.size()];
 		std::vector<FileTreeNode*> files;
-		std::vector<FileTreeNode*> dir_buf;
 		std::vector<std::string> file_names;
 		std::vector<std::pair<char*, unsigned int>> buffers;
+		size_t needed_sectors = 1;
 		// Write folders first and files later
 		for (auto node : cur_tree->tree) {
 			if (node->file->IsDirectory() && cur_dir == nullptr) {
 				needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
+				if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
+					cur_spec_lba++;
+					needed_sectors++;
+				}
 			}
-			else if (node->file->IsDirectory()) {
-				dir_buf.push_back(node);
+			else if (cur_dir == nullptr) {
+				files.push_back(node);
 			}
 			else {
-				files.push_back(node);
+				needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
+				if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
+					cur_spec_lba++;
+					needed_sectors++;
+				}
 			}
 		}
 
 		// Fill in the files
 		for (auto file : files) {
 			needed_memory += fill_fid(sm, file_idents[index++], file, cur_spec_lba, buffers);
+			if (std::ceil(needed_memory / 2048.0) > needed_sectors || needed_memory / 2048 == needed_sectors) { // Sector overflowing
+				cur_spec_lba++;
+				needed_sectors++;
+			}
 		}
 
-		for (auto node : dir_buf) {
-			needed_memory += fill_fid(sm, file_idents[index++], node, cur_spec_lba, buffers);
-		}
-
+		
 		// Write the data to the sector
-		char* buffer = (char*)malloc(needed_memory);
+		char* buffer = (char*)malloc(needed_sectors * 2048);
+		memset(buffer, 0, needed_sectors * 2048);
 		int offset = 0;
 		memcpy(buffer, &fi_root, sizeof(FileIdentifierDescriptor));
 		offset += sizeof(FileIdentifierDescriptor);
-		for (auto p : buffers) {
+		auto prev_sector = 0;
+		for (size_t j = 0; j < buffers.size(); ++j) {
+			auto p = buffers[j];
 			memcpy(buffer + offset, p.first, p.second);
 			offset += p.second;
 			free(p.first);
@@ -926,7 +888,9 @@ void write_sectors(FILE* f, FileTree* ft) {
 			memset(buffer + offset, 0, needed_memory - offset);
 		}
 		dir_file_ident_size_map.emplace(std::pair<FileTree*, unsigned int>(cur_tree, needed_memory));
-		sm.write_sector<char>(f, buffer, needed_memory);
+		for (size_t j = 0; j < needed_sectors; ++j) {
+			sm.write_sector<char>(f, buffer + 2048 * j, 2048);
+		}
 		cur_spec_lba++;
 		free(buffer);
 
@@ -1029,7 +993,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		fe.record_disp_attrib = 0;
 		fe.record_len = 0;
 		fe.info_len = dir_file_ident_size_map.at(dir->next);
-		fe.log_blocks_rec = 1;
+		fe.log_blocks_rec = std::ceil(fe.info_len / 2048.0);
 		fe.access_time = twins_creation_time;
 		fe.mod_time = twins_creation_time;
 		fe.attrib_time = twins_creation_time;
@@ -1062,7 +1026,8 @@ void write_sectors(FILE* f, FileTree* ft) {
 		pad_string((char*)fe.iuea_udf_cgms.impl_ident.ident_suffix, 2, 8, '\0');
 		strncpy((char*)fe.iuea_udf_cgms.impl_use, iuea_cgms_impl, 8);
 		fe.alloc_desc.info_len = fe.info_len; // Size of file identifier descriptor for folders, size of file for files
-		fe.alloc_desc.log_block_num = log_block_num++; // Always 2 for root, local sector for files
+		fe.alloc_desc.log_block_num = log_block_num; // Always 2 for root, local sector for files
+		log_block_num += fe.log_blocks_rec;
 		fill_tag_checksum(fe_tag, &fe);
 		sm.write_sector<FileEntry>(f, &fe);
 		cur_spec_lba++;
@@ -1090,7 +1055,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 	DescriptorTag& eos_tag = eos.tag;
 	eos_tag.tag_ident = 2;
 	eos_tag.desc_version = 2;
-	eos_tag.desc_crc_len = 2032;
+	eos_tag.desc_crc_len = sizeof(EndOfSessionDescriptor) - sizeof(DescriptorTag);
 	eos_tag.tag_location = sm.get_total_sectors() - 1;
 	eos.alloc_desc1.info_len = 0x8000;
 	eos.alloc_desc1.log_block_num = 0x20;
@@ -1169,12 +1134,11 @@ void pad_string(char* str, int offset, int size, const char pad) {
 }
 
 // Offset and start_lba are changing due to their constant calling, yeah yeah C-like code in C++ shut up :P
-void _fill_path_table(char* buffer, FileTreeNode* node, int& offset, uint& start_lba, ushort par_index, bool msb) {
+void _fill_path_table(char* buffer, FileTreeNode* node, int& offset, uint start_lba, ushort par_index, bool msb) {
 	buffer[offset++] = node->file->GetName().size();
 	buffer[offset++] = 0;
 	uint* lba = (uint*)(buffer + offset);
 	*lba = msb ? changeEndianness32(start_lba) : start_lba;
-	start_lba++;
 	offset += 4;
 	ushort par_dir_num = msb ? changeEndianness16(par_index) : par_index;
 	ushort* par_dir_num_ptr = (ushort*)(buffer + offset);
@@ -1208,7 +1172,7 @@ void _explore_tree(FileTreeNode* node, std::vector<DirectoryDepth>& vec, int dep
 	}
 }
 
-void fill_path_table(char* buffer, FileTree* ft, bool msb) {
+void fill_path_table(SectorManager& sm, char* buffer, FileTree* ft, bool msb) {
 	// Fill in the root table
 	buffer[0] = 1; // Ident len
 	buffer[1] = 0; // ext_rec_attrib_len
@@ -1237,6 +1201,22 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 	}
 	// Sort by depth
 	std::sort(depths.begin(), depths.end(), [](DirectoryDepth& dir1, DirectoryDepth& dir2) {
+		auto dir1_path = dir1.node->file->GetPath();
+		auto dir2_path = dir2.node->file->GetPath();
+
+		if (dir1.depth == dir2.depth) {
+			std::regex regexp("[\\\\/]");
+			std::sregex_token_iterator dir1_match(dir1_path.begin(), dir1_path.end(), regexp, -1);
+			std::sregex_token_iterator dir2_match(dir2_path.begin(), dir2_path.end(), regexp, -1);
+			std::sregex_token_iterator end;
+			while (dir1_match != end && dir2_match != end) {
+				if (strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) != 0) {
+					return strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) < 0;
+				}
+				dir1_match++;
+				dir2_match++;
+			}
+		}
 		return dir1.depth < dir2.depth;
 	});
 	// Map node's children to a parent index
@@ -1257,9 +1237,8 @@ void fill_path_table(char* buffer, FileTree* ft, bool msb) {
 	// Fill table based on depth
 	if (depths.size() != 0) {
 		int offset = 10;
-		uint init_lba = 262;
 		for (const auto& depth : depths) {
-			_fill_path_table(buffer, depth.node, offset, init_lba, par_index_map.at(depth.node), msb);
+			_fill_path_table(buffer, depth.node, offset, sm.get_file_sector(depth.node), par_index_map.at(depth.node), msb);
 		}
 	}
 }
@@ -1284,7 +1263,6 @@ unsigned int fill_fid(SectorManager& sm, FileIdentifierDescriptor& fi, FileTreeN
 	fi.len_of_impl_use = 0;
 	fi.impl_use = 0x10;
 	fi.file_ident = '\0';
-	// needed_memory += struct_size;
 	auto f_buf_len = (file_name_size + file_name_size % 2) * 2;
 	auto f_name_buf = new char[f_buf_len];
 	std::string udf_comp({ 0x8 });
@@ -1383,4 +1361,49 @@ void fill_tag_checksum(DescriptorTag& tag, T* buffer, unsigned int size)
 	tag.tag_checksum = 0;
 	auto tag_cksum = cksum_tag((unsigned char*)&tag, sizeof(DescriptorTag));
 	tag.tag_checksum = tag_cksum;
+}
+
+void fill_directory_record(SectorManager& sm, FileTreeNode* node, DirectoryRecord* dir_rec, std::vector<std::string>& file_names_buf, int& index, int& needed_memory) {
+	auto file = node->file;
+	DirectoryRecord& rec = dir_rec[index++];
+	rec.dir_rec_len = 48 + file->GetName().size() - (file->GetName().size() % 2) + (file->IsDirectory() ? 0 : 2);
+	needed_memory += rec.dir_rec_len;
+	rec.loc_of_ext_lsb = sm.get_file_sector(node);
+	rec.loc_of_ext_msb = changeEndianness32(sm.get_file_sector(node));
+	if (file->IsDirectory()) {
+		auto rec_len = 0x30 * 2U;
+		auto section = 1;
+		for (auto node : node->next->tree) {
+			auto next_len = node->file->GetName().size() - node->file->GetName().size() % 2;
+			next_len += (node->file->IsDirectory() ? 0x30 : 0x32);
+			if (rec_len + next_len > 2048 * section) { // Pad to 2048
+				rec_len += (2048 - rec_len % 2048);
+				section++;
+			}
+			rec_len += next_len;
+		}
+		rec.data_len_lsb = rec_len;
+		rec.data_len_msb = changeEndianness32(rec_len);
+	}
+	else {
+		rec.data_len_lsb = file->GetSize();
+		rec.data_len_msb = changeEndianness32(file->GetSize());
+	}
+	rec.red_date_and_time[0] = 120;
+	rec.red_date_and_time[1] = 8;
+	rec.red_date_and_time[2] = 25;
+	rec.red_date_and_time[3] = 11;
+	rec.red_date_and_time[4] = 30;
+	rec.red_date_and_time[5] = '\0';
+	rec.red_date_and_time[6] = '\0';
+	rec.flags = file->IsDirectory() ? 2 : 0;
+	rec.vol_seq_num_lsb = 1;
+	rec.vol_seq_num_msb = changeEndianness16(1);
+	rec.file_ident_len = file->GetName().size() + (file->IsDirectory() ? 0 : 2);
+	rec.file_ident = '\0'; // These are set in memory directly
+	auto f_name = file->IsDirectory() ? file->GetName() : file->GetName().append(";1");
+	auto _pad = '\0';
+	if (rec.file_ident_len % 2 != 0) f_name.append(&_pad);
+	std::transform(f_name.begin(), f_name.end(), f_name.begin(), ::toupper);
+	file_names_buf.push_back(f_name);
 }

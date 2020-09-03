@@ -30,6 +30,8 @@ struct FileTreeNode {
 	int links; // Amount of links to another directories
 	int depth;
 	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0), links(1) {}
+	unsigned int get_directory_records_space();
+	unsigned int get_file_identifiers_space();
 };
 
 struct FileTree {
@@ -40,11 +42,15 @@ struct FileTree {
 	long get_content_amount();
 	long get_dir_links();
 	unsigned int get_files_size();
+	unsigned int get_directory_records_amount();
+	unsigned int get_file_identifiers_amount();
 
 private:
 	void _get_dir_amount(FileTreeNode* node, long& amount);
 	void _get_file_amount(FileTreeNode* node, long& amount);
 	void _get_files_size(FileTreeNode* node, unsigned int& size);
+	void _get_directory_records_amount(FileTreeNode* node, unsigned int& amount);
+	void _get_file_identifiers_amount(FileTreeNode* node, unsigned int& amount);
 };
 
 class Directory

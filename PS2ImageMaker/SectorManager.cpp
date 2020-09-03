@@ -21,6 +21,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include "Directory.h"
 #include "File.h"
 #include <algorithm>
+#include <regex>
 
 SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261L), total_sectors(0)
 {
@@ -28,10 +29,10 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	auto files = ft->get_file_amount();
 	this->directories_amount = directories + 1; // Adding 1 because root directory must be recorded as well
 	this->files_amount = files;
-	auto directory_records = this->directories_amount;
+	auto directory_records = ft->get_directory_records_amount();
 	auto file_set_descriptors = 1;
 	auto terminating_descriptors = 1;
-	auto file_ident_descriptors = this->directories_amount;
+	auto file_ident_descriptors = ft->get_file_identifiers_amount();
 	auto file_entry_directories = this->directories_amount;
 	auto file_entry_files = this->files_amount;
 	partition_start_sector = 261 + directory_records;
@@ -40,7 +41,7 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	auto data_sectors = ft->get_files_size() / 2048;
 	total_sectors = data_sector + data_sectors + 1; // End of session descriptor?
 	if (total_sectors % 0x10 != 0) { // Not entirely sure why but the amount of sectors needs to be a multiple of 0x10(16)
-		pad_sectors = (0x10 - total_sectors % 0x10) - 1;
+		pad_sectors = (0x10 - total_sectors % 0x10);
 		total_sectors += (0x10 - total_sectors % 0x10); // however many pad sectors and 1 extra end of session descriptor?
 	}
 	// Allocate the data sectors
@@ -53,42 +54,25 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	}
 	// Fill files
 	auto cur_tree = ft;
-	unsigned int dir_lba = 3 + this->directories_amount;
+	unsigned int dir_lba = 2 + file_ident_descriptors;
 	unsigned int data_sec = this->data_sector;
-	unsigned int data_lba = dir_lba - 1 + this->directories_amount;
-	unsigned int file_local_sector = this->data_sector - 261 - this->directories_amount;
-	//this->files.push_back(nullptr); // Allocate space for System.cnf
-	for (auto i = 0; i < this->directories_amount; ++i) {
-		for (auto node : cur_tree->tree) {
-			if (!node->file->IsDirectory()) {
-				auto vec_iter = std::find_if(file_sectors.begin(), file_sectors.end(), [node](std::pair<FileTreeNode*, FileLocation> p) {
-					return p.first == node;
-				});
-				/*if (!strcmp("System.cnf", node->file->GetName().c_str())) {
-					this->files.erase(this->files.begin());
-					this->files.insert(this->files.begin(), node);
-					(*vec_iter).second.global_sector = data_sector + 1;
-					(*vec_iter).second.lba = 7 + this->directories_amount;
-					(*vec_iter).second.local_sector = data_sector - 261 - this->directories_amount;
-					continue;
-				}*/
-				this->files.push_back(node);
-				(*vec_iter).second.global_sector = data_sec;
-				(*vec_iter).second.lba = data_lba++;
-				(*vec_iter).second.local_sector = file_local_sector;
-				auto sector_space = 0;
-				if ((*vec_iter).first->file->GetSize() % 2048 != 0) {
-					sector_space = ((*vec_iter).first->file->GetSize() + (2048 - (*vec_iter).first->file->GetSize() % 2048)) / 2048;
-				}
-				else {
-					sector_space = (*vec_iter).first->file->GetSize() / 2048;
-				}
-				data_sec += sector_space;
-				file_local_sector += sector_space;
+	unsigned int data_lba = dir_lba + this->directories_amount;
+	unsigned int file_local_sector = this->data_sector - 261 - directory_records;
+	for (auto& p : file_sectors) {
+		if (!p.first->file->IsDirectory()) {
+			this->files.push_back(p.first);
+			p.second.global_sector = data_sec;
+			p.second.lba = data_lba++;
+			p.second.local_sector = file_local_sector;
+			auto sector_space = 0;
+			if (p.first->file->GetSize() % 2048 != 0) {
+				sector_space = (p.first->file->GetSize() + (2048 - p.first->file->GetSize() % 2048)) / 2048;
 			}
-		}
-		if (i != this->directories_amount - 1) {
-			cur_tree = this->directories[i]->next;
+			else {
+				sector_space = p.first->file->GetSize() / 2048;
+			}
+			data_sec += sector_space;
+			file_local_sector += sector_space;
 		}
 	}
 }
@@ -118,11 +102,8 @@ void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_siz
 void SectorManager::pad_sector(FILE* f, int padding_size)
 {
 	// Pad to align the sector
-	auto pad = '\0';
-	auto leftover = padding_size;
-	for (int i = 0; i < leftover; ++i) {
-		fwrite(&pad, 1, 1, f);
-	}
+	auto pad = new char[padding_size]();
+	fwrite(pad, 1, padding_size, f);
 }
 
 unsigned int SectorManager::get_total_sectors()
@@ -199,16 +180,33 @@ void SectorManager::_fill_file_sectors(FileTree* ft, bool root)
 	}
 	// Need to sort the map but only by the initial caller
 	if (!root) return;
-	// Sort by depth
-	std::sort(file_sectors.begin(), file_sectors.end(), [](std::pair<FileTreeNode*, FileLocation> f1, std::pair<FileTreeNode*, FileLocation>  f2) {
-		return f1.first->depth < f2.first->depth;
+	// Sort by depth and name
+	std::sort(file_sectors.begin(), file_sectors.end(), [](std::pair<FileTreeNode*, FileLocation> dir1, std::pair<FileTreeNode*, FileLocation> dir2) {
+		auto dir1_path = dir1.first->file->GetPath();
+		auto dir2_path = dir2.first->file->GetPath();
+
+		if (dir1.first->depth == dir2.first->depth) {
+			std::regex regexp("[\\\\/]");
+			std::sregex_token_iterator dir1_match(dir1_path.begin(), dir1_path.end(), regexp, -1);
+			std::sregex_token_iterator dir2_match(dir2_path.begin(), dir2_path.end(), regexp, -1);
+			std::sregex_token_iterator end;
+			while (dir1_match != end && dir2_match != end) {
+				if (strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) != 0) {
+					return strcmp((*dir1_match).str().c_str(), (*dir2_match).str().c_str()) < 0;
+				}
+				dir1_match++;
+				dir2_match++;
+			}
+		}
+		return dir1.first->depth < dir2.first->depth;
 	});
 	unsigned int directory_record_sector = 262;
-	unsigned int dir_lba = 3 + directories_amount; // Directory LBA starts 2 sectors from FileSetDescriptor + 1 since we record root in code later
+	unsigned int dir_lba = 3 + ft->get_file_identifiers_amount(); // Directory LBA starts 2 sectors from FileSetDescriptor + 1 since we record root in code later
 	for (auto& file_sector : file_sectors) {
 		// If it's a directory use directory records sectors
 		if (file_sector.first->file->IsDirectory()) {
-			file_sector.second.global_sector = directory_record_sector++;
+			file_sector.second.global_sector = directory_record_sector;
+			directory_record_sector += file_sector.first->get_directory_records_space();
 			file_sector.second.lba = dir_lba++;
 		}
 	}
