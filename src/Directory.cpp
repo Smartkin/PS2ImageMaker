@@ -17,7 +17,13 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
 #include "pch.h"
+#include <cstddef>
+#ifdef _WIN32
 #include <Windows.h>
+#else
+#include <stdio.h>
+#include <dirent.h>
+#endif
 #include <vector>
 #include <cmath>
 #include "Directory.h"
@@ -31,6 +37,7 @@ Directory::Directory(const char* path) : path(path) {}
 
 
 FileTree* Directory::get_files() {
+#ifdef _WIN32
 	WIN32_FIND_DATAA file_info;
 	FileTree* ft = new FileTree();
 	path.append("/*");
@@ -43,9 +50,22 @@ FileTree* Directory::get_files() {
 	else { // No files or directories found
 		return nullptr;
 	}
+#else
+	FileTree* ft = new FileTree();
+	DIR* dr = opendir(path.c_str());
+	if (dr == NULL)
+	{
+		return nullptr;
+	}
+	
+	closedir(dr);
+	enumerate_files_recursively(ft, nullptr, path);
+	return ft;
+#endif
 }
 
 void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string path, int depth) {
+#ifdef _WIN32
 	WIN32_FIND_DATAA file_info;
 	auto find_handle = FindFirstFileA(path.c_str(), &file_info);
 	if (find_handle != INVALID_HANDLE_VALUE) {
@@ -62,7 +82,6 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 			auto node = new FileTreeNode(nullptr, parent, file);
 			node->depth = depth;
 			if (file->IsDirectory()) {
-				
 				node->next = new FileTree();
 				auto str = file->GetPath().append("/*");
 				enumerate_files_recursively(node->next, node, str, depth + 1);
@@ -71,6 +90,25 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 		} while (FindNextFileA(find_handle, &file_info));
 		FindClose(find_handle);
 	}
+#else
+	DIR* dr = opendir(path.c_str());
+	path.append("/");
+	struct dirent* dir;
+	while ((dir = readdir(dr)) != NULL) {
+		auto pth = path;
+		pth.append(dir->d_name);
+		auto file = new File(dir->d_type & DT_DIR, dir->d_reclen, pth.c_str(), "", dir->d_name);
+		auto node = new FileTreeNode(nullptr, parent, file);
+		node->depth = depth;
+		if (file->IsDirectory()) {
+			node->next = new FileTree();
+			auto str = file->GetPath();
+			enumerate_files_recursively(node->next, node, str, depth + 1);
+		}	
+		ft->tree.push_back(node);
+	}
+	closedir(dr);
+#endif
 }
 
 long FileTree::get_dir_amount()

@@ -31,7 +31,9 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <map>
 #include <regex>
 #include <cassert>
+#include <cstring>
 #include <stdio.h>
+#include <cmath>
 
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
 std::mutex progress_mut;

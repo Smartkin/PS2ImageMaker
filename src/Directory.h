@@ -19,9 +19,12 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #pragma once
 #include <string>
 #include <vector>
+
 class File;
 struct Progress;
 struct FileTree;
+
+
 
 struct FileTreeNode {
 	FileTree* next;
@@ -29,7 +32,9 @@ struct FileTreeNode {
 	FileTreeNode* parent;
 	int links; // Amount of links to another directories
 	int depth;
+
 	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0), links(1) {}
+	
 	unsigned int get_directory_records_space();
 	unsigned int get_file_identifiers_space();
 };
@@ -61,6 +66,5 @@ public:
 
 private:
 	std::string path;
-
 };
 

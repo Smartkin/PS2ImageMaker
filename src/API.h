@@ -18,7 +18,11 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 
 #pragma once
 #ifndef DLLEXPORT
+#ifdef _WIN32
 #define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT
+#endif
 #endif
 
 enum ProgressState {

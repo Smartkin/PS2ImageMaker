@@ -22,6 +22,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <vector>
 #include <map>
 #include <stdio.h>
+
 struct FileTree;
 struct FileTreeNode;
 
@@ -29,6 +30,23 @@ struct FileLocation {
 	unsigned int global_sector; // starting from the top of the disc
 	unsigned int local_sector; // specific to files which is their global sector - sector number of the FileSetDescriptor
 	unsigned int lba; // starting from FileIdentifierDescriptor sector
+};
+
+class ImageMakerException : public std::exception
+{
+public:
+	ImageMakerException(const char* message)
+	{
+		this->message = message;
+	}
+
+	const char* what() const noexcept override
+	{
+		return message;
+	}
+
+private:
+	const char* message;
 };
 
 class SectorManager
@@ -73,7 +91,7 @@ template<typename T>
 inline void SectorManager::write_sector(FILE* f, T* data, unsigned int size)
 {
 	if (size > 2048) {
-		throw std::exception("Can't write to sector more than sector's size");
+		throw ImageMakerException("Can't write to sector more than sector's size");
 	}
 	
 	// Write the data

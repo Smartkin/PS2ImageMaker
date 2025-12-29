@@ -22,6 +22,8 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include "File.h"
 #include <algorithm>
 #include <regex>
+#include <cmath>
+#include <cstring>
 
 SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261L), total_sectors(0)
 {

@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
+#ifdef _WIN32
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 
@@ -35,3 +36,4 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     return TRUE;
 }
 
+#endif
