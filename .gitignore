@@ -9,7 +9,8 @@
 *.user
 *.userosscache
 *.sln.docstates
-
+.idea/
+*/.idea/
 # Deployment-specific files
 *.zip
 
