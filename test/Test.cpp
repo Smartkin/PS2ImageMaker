@@ -19,6 +19,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 // Test.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
+#include <cstring>
 #include <iostream>
 #include <API.h>
 #include <cassert>

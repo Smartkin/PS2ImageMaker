@@ -37,6 +37,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
 std::mutex progress_mut;
+std::thread* pack_thread = nullptr;
 Progress program_progress;
 Progress progress_copy;
 bool progress_dirty;
@@ -69,12 +70,22 @@ void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_l
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
+	const size_t game_path_copy_size = std::min(strlen(game_path), 1023UL);
 	// Copy over the received strings
-	strncpy(::game_path, game_path, strlen(game_path));
-	::game_path[strlen(game_path)] = '\0';
-	strncpy(::dest_path, dest_path, strlen(dest_path));
-	::dest_path[strlen(dest_path)] = '\0';
-	std::thread* thr = new std::thread(pack, ::game_path, ::dest_path);
+	strncpy(::game_path, game_path, game_path_copy_size);
+	::game_path[game_path_copy_size] = '\0';
+
+	const size_t dest_path_copy_size = std::min(strlen(dest_path), 1023UL);
+	strncpy(::dest_path, dest_path, dest_path_copy_size);
+	::dest_path[dest_path_copy_size] = '\0';
+
+	if (pack_thread != nullptr)
+	{
+		pack_thread->detach();
+		delete pack_thread;
+		pack_thread = nullptr;
+	}
+	pack_thread = new std::thread(pack, ::game_path, ::dest_path);
 	return &progress_copy;
 }
 
@@ -105,6 +116,7 @@ void pack(const char* game_path, const char* dest_path) {
 	// image.open(dest_path, std::ios_base::binary | std::ios_base::out);
 	write_sectors(image, ft);
 	update_progress(ProgressState::FINISHED, 1.0, "", true);
+	delete ft;
 }
 
 // All the writing for each sector is packed into this single function(for the most part) instead of having each sector to be in its separate function

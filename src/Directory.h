@@ -17,6 +17,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
 #pragma once
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@ struct FileTreeNode {
 	int depth;
 
 	FileTreeNode(FileTree* next, FileTreeNode* parent, File* file) : next(next), parent(parent), file(file), depth(0), links(1) {}
+	~FileTreeNode();
 	
 	unsigned int get_directory_records_space();
 	unsigned int get_file_identifiers_space();
@@ -41,6 +43,11 @@ struct FileTreeNode {
 
 struct FileTree {
 	std::vector<FileTreeNode*> tree;
+
+	~FileTree() {
+		std::for_each(tree.begin(), tree.end(), [](FileTreeNode* node) { delete node; });
+		tree.clear();
+	}
 
 	long get_dir_amount();
 	long get_file_amount();

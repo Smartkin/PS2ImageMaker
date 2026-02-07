@@ -18,11 +18,13 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 
 #include "pch.h"
 #include <cstddef>
+#include <cstring>
 #ifdef _WIN32
 #include <Windows.h>
 #else
 #include <stdio.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #endif
 #include <vector>
 #include <cmath>
@@ -32,6 +34,11 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include "API.h"
 
 void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string path, int depth = 0);
+
+FileTreeNode::~FileTreeNode()
+{
+	if (file != nullptr) delete file;
+}
 
 Directory::Directory(const char* path) : path(path) {}
 
@@ -95,9 +102,15 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 	path.append("/");
 	struct dirent* dir;
 	while ((dir = readdir(dr)) != NULL) {
+		if (!strcmp(dir->d_name, ".") || !strcmp(dir->d_name, ".."))
+		{
+			continue;
+		}
 		auto pth = path;
 		pth.append(dir->d_name);
-		auto file = new File(dir->d_type & DT_DIR, dir->d_reclen, pth.c_str(), "", dir->d_name);
+		struct stat sb;
+		lstat(pth.c_str(), &sb);
+		auto file = new File(dir->d_type & DT_DIR, sb.st_size, pth.c_str(), "", dir->d_name);
 		auto node = new FileTreeNode(nullptr, parent, file);
 		node->depth = depth;
 		if (file->IsDirectory()) {
