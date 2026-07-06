@@ -16,13 +16,20 @@ You should have received a copy of the GNU General Public License
 along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
-#pragma once
+#ifndef PS2_IMAGE_MAKER_H
+#define PS2_IMAGE_MAKER_H
 #ifndef DLLEXPORT
 #ifdef _WIN32
 #define DLLEXPORT __declspec(dllexport)
 #else
 #define DLLEXPORT
 #endif
+#endif
+
+#ifdef __cplusplus
+#define C_EXPORT extern "C"
+#else
+#define C_EXPORT
 #endif
 
 enum ProgressState {
@@ -34,7 +41,7 @@ enum ProgressState {
 	FINISHED,
 };
 
-extern "C" struct DLLEXPORT Progress {
+C_EXPORT struct DLLEXPORT Progress {
 	char file_name[256];
 	int size;
 	ProgressState state;
@@ -44,11 +51,13 @@ extern "C" struct DLLEXPORT Progress {
 	bool new_file;
 };
 
-extern "C" DLLEXPORT Progress* start_packing(const char* game_path, const char* dest_path);
+C_EXPORT DLLEXPORT Progress* start_packing(const char* game_path, const char* dest_path);
 
-extern "C" DLLEXPORT void set_file_buffer(unsigned int buffer_size);
+C_EXPORT DLLEXPORT void set_file_buffer(unsigned int buffer_size);
 
-extern "C" DLLEXPORT Progress* poll_progress();
+C_EXPORT DLLEXPORT Progress* poll_progress();
+
+#ifdef __cplusplus
 
 void update_progress(ProgressState message, float progress, const char* file_name = "", bool finished = false);
 
@@ -58,3 +67,7 @@ extern bool progress_dirty;
 extern char game_path[1024];
 extern char dest_path[1024];
 extern unsigned int buffer_size;
+
+#endif
+
+#endif // PS2_IMAGE_MAKER_H
