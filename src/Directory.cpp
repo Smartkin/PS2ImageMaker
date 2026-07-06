@@ -31,7 +31,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include "Directory.h"
 #include "SectorDescriptors.h"
 #include "File.h"
-#include "API.h"
+#include "ps2imagemaker.h"
 
 void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string path, int depth = 0);
 

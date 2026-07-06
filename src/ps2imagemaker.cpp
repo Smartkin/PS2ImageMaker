@@ -17,7 +17,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 */
 
 #include "pch.h"
-#include "API.h"
+#include "ps2imagemaker.h"
 #include "Directory.h"
 #include "File.h"
 #include "SectorManager.h"

@@ -21,7 +21,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 
 #include <cstring>
 #include <iostream>
-#include <API.h>
+#include <ps2imagemaker.h>
 #include <cassert>
 
 int main()
