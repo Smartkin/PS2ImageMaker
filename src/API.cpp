@@ -35,6 +35,8 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <cmath>
 
+#undef min
+
 constexpr auto LOG_BLOCK_SIZE = 0x800U;
 std::mutex progress_mut;
 std::thread* pack_thread = nullptr;
@@ -70,6 +72,7 @@ void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_l
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
+	program_progress = {};
 	const size_t game_path_copy_size = std::min(strlen(game_path), 1023UL);
 	// Copy over the received strings
 	strncpy(::game_path, game_path, game_path_copy_size);
