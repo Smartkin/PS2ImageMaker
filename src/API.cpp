@@ -73,12 +73,12 @@ void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_l
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
 	program_progress = {};
-	const size_t game_path_copy_size = std::min(strlen(game_path), 1023UL);
+	const size_t game_path_copy_size = std::min((unsigned long)strlen(game_path), 1023UL);
 	// Copy over the received strings
 	strncpy(::game_path, game_path, game_path_copy_size);
 	::game_path[game_path_copy_size] = '\0';
 
-	const size_t dest_path_copy_size = std::min(strlen(dest_path), 1023UL);
+	const size_t dest_path_copy_size = std::min((unsigned long)strlen(dest_path), 1023UL);
 	strncpy(::dest_path, dest_path, dest_path_copy_size);
 	::dest_path[dest_path_copy_size] = '\0';
 
