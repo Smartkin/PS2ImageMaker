@@ -29,6 +29,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #ifdef __cplusplus
 #define C_EXPORT extern "C"
 #else
+#include <stdbool.h>
 #define C_EXPORT
 #endif
 
@@ -41,7 +42,7 @@ typedef enum {
 	FINISHED,
 } ProgressState;
 
-C_EXPORT struct DLLEXPORT Progress {
+C_EXPORT typedef struct DLLEXPORT Progress {
 	char file_name[256];
 	int size;
 	ProgressState state;
@@ -49,7 +50,7 @@ C_EXPORT struct DLLEXPORT Progress {
 	bool finished;
 	bool new_state;
 	bool new_file;
-};
+} Progress;
 
 C_EXPORT DLLEXPORT Progress* start_packing(const char* game_path, const char* dest_path);
 
