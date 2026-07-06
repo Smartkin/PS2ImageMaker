@@ -32,14 +32,14 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #define C_EXPORT
 #endif
 
-enum ProgressState {
+typedef enum {
 	FAILED = -1,
 	ENUM_FILES,
 	WRITE_SECTORS,
 	WRITE_FILES,
 	WRITE_END,
 	FINISHED,
-};
+} ProgressState;
 
 C_EXPORT struct DLLEXPORT Progress {
 	char file_name[256];

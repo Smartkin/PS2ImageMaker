@@ -118,6 +118,7 @@ void pack(const char* game_path, const char* dest_path) {
 	FILE* image = fopen(dest_path, "wb+");
 	// image.open(dest_path, std::ios_base::binary | std::ios_base::out);
 	write_sectors(image, ft);
+	fclose(image);
 	update_progress(ProgressState::FINISHED, 1.0, "", true);
 	delete ft;
 }
