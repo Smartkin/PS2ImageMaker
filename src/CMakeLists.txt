@@ -10,7 +10,7 @@ add_library(PS2ImageMaker SHARED $<TARGET_OBJECTS:objlib>)
 add_library(PS2ImageMakerStatic STATIC $<TARGET_OBJECTS:objlib>)
 
 if (MSVC)
-    set_property(TARGET PS2ImageMakerStatic PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded<$<CONFIG:DEBUG>:DEBUG>")
+    set_property(TARGET PS2ImageMakerStatic PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:DEBUG>:DEBUG>")
 else()
     target_link_libraries(PS2ImageMakerStatic INTERFACE stdc++)
 endif()
