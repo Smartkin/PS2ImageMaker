@@ -15,6 +15,12 @@ else()
     target_link_libraries(PS2ImageMakerStatic INTERFACE stdc++)
 endif()
 
+if (MINGW)
+    # PS2ImageMaker.dll, the name MSVC gives it (what programs load), with MinGW's own libraries linked in: no DLLs of MinGW's next to it
+    set_target_properties(PS2ImageMaker PROPERTIES PREFIX "")
+    target_link_options(PS2ImageMaker PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+
 target_sources(PS2ImageMaker PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES ps2imagemaker.h)
 target_sources(PS2ImageMakerStatic PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES ps2imagemaker.h)
 

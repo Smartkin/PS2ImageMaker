@@ -20,7 +20,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <cstddef>
 #include <cstring>
 #ifdef _WIN32
-#include <Windows.h>
+#include <windows.h>
 #else
 #include <stdio.h>
 #include <dirent.h>
