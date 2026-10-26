@@ -19,6 +19,7 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #pragma once
 #include <fstream>
 #include <exception>
+#include <string>
 #include <vector>
 #include <map>
 #include <stdio.h>
@@ -35,18 +36,22 @@ struct FileLocation {
 class ImageMakerException : public std::exception
 {
 public:
-	ImageMakerException(const char* message)
-	{
-		this->message = message;
-	}
+	ImageMakerException(const std::string& message, const std::string& file = "") : message(message), file(file) {}
 
 	const char* what() const noexcept override
 	{
-		return message;
+		return message.c_str();
+	}
+
+	// The file the packing stopped at, for the progress, none when it's the image
+	const std::string& get_file() const noexcept
+	{
+		return file;
 	}
 
 private:
-	const char* message;
+	std::string message;
+	std::string file;
 };
 
 class SectorManager
@@ -57,7 +62,8 @@ public:
 
 	template<typename T>
 	void write_sector(FILE* f, T* data, unsigned int size = sizeof(T));
-	void write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size);
+	// False when the input file has fewer bytes than its size
+	bool write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size);
 	void pad_sector(FILE* f, int padding_size);
 	unsigned int get_total_sectors();
 	long get_current_sector();
@@ -73,6 +79,9 @@ public:
 
 private:
 	void _fill_file_sectors(FileTree* ft, bool root);
+	// The image ends at the sectors its descriptors count: writing past them is a miscount, refused
+	void claim_sectors(long count);
+	void write_bytes(FILE* f, const void* data, size_t size);
 
 private:
 	long current_sector;
@@ -93,12 +102,8 @@ inline void SectorManager::write_sector(FILE* f, T* data, unsigned int size)
 	if (size > 2048) {
 		throw ImageMakerException("Can't write to sector more than sector's size");
 	}
-	
-	// Write the data
-	fwrite(data, 1, size, f);
-	//f.write(reinterpret_cast<char*>(data), size);
 
-
+	claim_sectors(1);
+	write_bytes(f, data, size);
 	pad_sector(f, 2048 - size);
-	current_sector++;
 }

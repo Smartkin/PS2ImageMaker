@@ -12,5 +12,7 @@ endif()
 
 set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 
+enable_testing()
+
 add_subdirectory(src)
 add_subdirectory(test)

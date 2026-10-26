@@ -72,7 +72,13 @@ void fill_file_fe(FILE* f, SectorManager& sm, ulong unique_id, ushort cur_spec_l
 
 // Launch the thread to pack
 extern "C" Progress* start_packing(const char* game_path, const char* dest_path) {
-	program_progress = {};
+	{
+		// The copy polls hand out starts over too: it was the last packing's, finished, until this one's thread first reported
+		std::lock_guard<std::mutex> guard(progress_mut);
+		program_progress = {};
+		progress_copy = {};
+		progress_dirty = false;
+	}
 	const size_t game_path_copy_size = std::min((unsigned long)strlen(game_path), 1023UL);
 	// Copy over the received strings
 	strncpy(::game_path, game_path, game_path_copy_size);
@@ -105,22 +111,47 @@ extern "C" void set_file_buffer(unsigned int buffer_size) {
 	::buffer_size = buffer_size;
 }
 
-// Start the packing
+// Start the packing. Whatever stops it fails the progress with the file it stopped at: an exception leaving this thread ended the program
 void pack(const char* game_path, const char* dest_path) {
-	Directory dir(game_path);
 	update_progress(ProgressState::ENUM_FILES, 0);
-	FileTree* ft = dir.get_files();
-	if (ft == nullptr) { // No file tree was built
-		update_progress(ProgressState::FAILED, 1.0, "", true);
-		return;
+	FileTree* ft = nullptr;
+	FILE* image = nullptr;
+	std::string failed_file;
+	bool written = false;
+	try {
+		Directory dir(game_path);
+		ft = dir.get_files();
+		if (ft != nullptr) { // No file tree was built otherwise
+			update_progress(ProgressState::WRITE_SECTORS, 0.1);
+			image = fopen(dest_path, "wb+");
+			if (image == nullptr) {
+				throw ImageMakerException(std::string("Can't create ") + dest_path);
+			}
+			write_sectors(image, ft);
+			written = true;
+		}
 	}
-	update_progress(ProgressState::WRITE_SECTORS, 0.1);
-	FILE* image = fopen(dest_path, "wb+");
-	// image.open(dest_path, std::ios_base::binary | std::ios_base::out);
-	write_sectors(image, ft);
-	fclose(image);
-	update_progress(ProgressState::FINISHED, 1.0, "", true);
+	catch (const ImageMakerException& e) {
+		failed_file = e.get_file();
+		fprintf(stderr, "PS2ImageMaker: %s\n", e.what());
+	}
+	catch (const std::exception& e) {
+		fprintf(stderr, "PS2ImageMaker: %s\n", e.what());
+	}
+	catch (...) {
+		fprintf(stderr, "PS2ImageMaker: the packing failed\n");
+	}
+	// Closed here only: write_sectors closed it as well, and the FILE was freed twice
+	if (image != nullptr && fclose(image) != 0) {
+		written = false;
+	}
 	delete ft;
+	if (written) {
+		update_progress(ProgressState::FINISHED, 1.0, "", true);
+	}
+	else {
+		update_progress(ProgressState::FAILED, program_progress.progress, failed_file.c_str(), true);
+	}
 }
 
 // All the writing for each sector is packed into this single function(for the most part) instead of having each sector to be in its separate function
@@ -911,6 +942,7 @@ void write_sectors(FILE* f, FileTree* ft) {
 		}
 		cur_spec_lba++;
 		free(buffer);
+		delete[] file_idents;
 
 		// Update current tree
 		if (i != directories - 1) {
@@ -1081,23 +1113,36 @@ void write_sectors(FILE* f, FileTree* ft) {
 	eos.alloc_desc2.log_block_num = 0x30;
 	fill_tag_checksum(eos_tag, &eos);
 	sm.write_sector(f, &eos);
-	fclose(f);
+	if (sm.get_current_sector() != (long)sm.get_total_sectors()) {
+		throw ImageMakerException("The image came out at " + std::to_string(sm.get_current_sector()) + " sectors, its descriptors count " +
+			std::to_string(sm.get_total_sectors()));
+	}
 }
 
 void write_file_tree(SectorManager& sm, FILE* f) {
 	auto files = sm.get_files();
 	auto progress_increment = 0.8 / sm.get_total_files();
-	auto max_file = std::max_element(files.begin(), files.end(), [](FileTreeNode* n1, FileTreeNode* n2) {
-		return n1->file->GetSize() < n2->file->GetSize();
-	});
-	char* read_buf = new char[::buffer_size];
+	std::vector<char> read_buf(::buffer_size);
 	for (auto node : files) {
-		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, node->file->GetName().c_str());
+		const std::string name = node->file->GetName();
+		update_progress(ProgressState::WRITE_FILES, program_progress.progress + progress_increment, name.c_str());
 		FILE* in_f = fopen(node->file->GetPath().c_str(), "rb");
-		sm.write_file(f, in_f, read_buf, node->file->GetSize(), ::buffer_size);
+		if (in_f == nullptr) {
+			throw ImageMakerException("Can't open " + node->file->GetPath(), name);
+		}
+		bool read = false;
+		try {
+			read = sm.write_file(f, in_f, read_buf.data(), node->file->GetSize(), ::buffer_size);
+		}
+		catch (...) {
+			fclose(in_f);
+			throw;
+		}
 		fclose(in_f);
+		if (!read) {
+			throw ImageMakerException("Can't read all of " + node->file->GetPath(), name);
+		}
 	}
-	delete[] read_buf;
 }
 
 void update_progress(ProgressState state, float progress, const char* file_name, bool finished) {
@@ -1110,7 +1155,8 @@ void update_progress(ProgressState state, float progress, const char* file_name,
 		program_progress.new_state = true;
 	}
 	if (strlen(file_name) != 0) {
-		program_progress.size = strlen(file_name);
+		// As much of the name as the progress holds
+		program_progress.size = (int)std::min(strlen(file_name), sizeof(program_progress.file_name) - 1);
 		program_progress.file_name[program_progress.size] = '\0';
 		strncpy(program_progress.file_name, file_name, program_progress.size);
 		program_progress.size += 1;

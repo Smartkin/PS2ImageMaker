@@ -28,8 +28,10 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #endif
 #include <vector>
 #include <cmath>
+#include <memory>
 #include "Directory.h"
 #include "SectorDescriptors.h"
+#include "SectorManager.h"
 #include "File.h"
 #include "ps2imagemaker.h"
 
@@ -38,6 +40,8 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 FileTreeNode::~FileTreeNode()
 {
 	if (file != nullptr) delete file;
+	// A folder's own tree goes with it
+	delete next;
 }
 
 Directory::Directory(const char* path) : path(path) {}
@@ -58,7 +62,6 @@ FileTree* Directory::get_files() {
 		return nullptr;
 	}
 #else
-	FileTree* ft = new FileTree();
 	DIR* dr = opendir(path.c_str());
 	if (dr == NULL)
 	{
@@ -66,7 +69,14 @@ FileTree* Directory::get_files() {
 	}
 	
 	closedir(dr);
-	enumerate_files_recursively(ft, nullptr, path);
+	FileTree* ft = new FileTree();
+	try {
+		enumerate_files_recursively(ft, nullptr, path);
+	}
+	catch (...) {
+		delete ft;
+		throw;
+	}
 	return ft;
 #endif
 }
@@ -99,6 +109,11 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 	}
 #else
 	DIR* dr = opendir(path.c_str());
+	if (dr == NULL) {
+		throw ImageMakerException("Can't read the folder " + path, path.substr(path.find_last_of('/') + 1));
+	}
+	// Closed however the enumeration ends
+	std::unique_ptr<DIR, int (*)(DIR*)> dir_closer(dr, closedir);
 	path.append("/");
 	struct dirent* dir;
 	while ((dir = readdir(dr)) != NULL) {
@@ -109,7 +124,9 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 		auto pth = path;
 		pth.append(dir->d_name);
 		struct stat sb;
-		lstat(pth.c_str(), &sb);
+		if (lstat(pth.c_str(), &sb) != 0) {
+			throw ImageMakerException("Can't read " + pth, dir->d_name);
+		}
 		auto file = new File(dir->d_type & DT_DIR, sb.st_size, pth.c_str(), "", dir->d_name);
 		auto node = new FileTreeNode(nullptr, parent, file);
 		node->depth = depth;
@@ -120,7 +137,6 @@ void enumerate_files_recursively(FileTree* ft, FileTreeNode* parent, std::string
 		}	
 		ft->tree.push_back(node);
 	}
-	closedir(dr);
 #endif
 }
 

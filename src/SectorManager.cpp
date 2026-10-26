@@ -25,7 +25,10 @@ along with this program.If not, see < https://www.gnu.org/licenses/>.
 #include <cmath>
 #include <cstring>
 
-SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261L), total_sectors(0)
+// Every count starts at 0: the pad sectors were only counted when the sectors weren't a multiple of 16, else they were whatever the packing
+// thread's stack had there (a thread's stack is often one an ended thread used), and that many zero sectors were written before the end
+SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261L), directories_amount(0L), files_amount(0L), total_sectors(0),
+	partition_start_sector(0), pad_sectors(0)
 {
 	auto directories = ft->get_dir_amount();
 	auto files = ft->get_file_amount();
@@ -79,10 +82,9 @@ SectorManager::SectorManager(FileTree* ft) : current_sector(0L), data_sector(261
 	}
 }
 
-void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size)
+bool SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_size, long buffer_size)
 {
-	int sectors_needed = std::ceil(file_size / 2048.0);
-	current_sector += sectors_needed;
+	claim_sectors((file_size + 2047) / 2048);
 	auto write_left = file_size;
 
 	while (write_left > 0) {
@@ -90,8 +92,11 @@ void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_siz
 		if (write_size > write_left) {
 			write_size = write_left;
 		}
-		fread(buf, 1, write_size, in_f);
-		fwrite(buf, 1, write_size, out_f);
+		// A short read would write what the buffer had before
+		if (fread(buf, 1, write_size, in_f) != (size_t)write_size) {
+			return false;
+		}
+		write_bytes(out_f, buf, write_size);
 		write_left -= write_size;
 	}
 
@@ -99,13 +104,31 @@ void SectorManager::write_file(FILE* out_f, FILE* in_f, void* buf, long file_siz
 		// Pad the rest to keep being aligned
 		pad_sector(out_f, 2048 - file_size % 2048);
 	}
+	return true;
 }
 
 void SectorManager::pad_sector(FILE* f, int padding_size)
 {
-	// Pad to align the sector
-	auto pad = new char[padding_size]();
-	fwrite(pad, 1, padding_size, f);
+	// Pad to align the sector, from zeros of its own: a new buffer every time was never freed
+	static const char zeros[2048] = {};
+	if (padding_size > 0) {
+		write_bytes(f, zeros, padding_size);
+	}
+}
+
+void SectorManager::claim_sectors(long count)
+{
+	if (current_sector + count > (long)total_sectors) {
+		throw ImageMakerException("Writing past the image's " + std::to_string(total_sectors) + " sectors");
+	}
+	current_sector += count;
+}
+
+void SectorManager::write_bytes(FILE* f, const void* data, size_t size)
+{
+	if (size != 0 && fwrite(data, 1, size, f) != size) {
+		throw ImageMakerException("Can't write the image");
+	}
 }
 
 unsigned int SectorManager::get_total_sectors()
