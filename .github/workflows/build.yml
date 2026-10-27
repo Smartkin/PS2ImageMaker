@@ -1,0 +1,40 @@
+name: Build
+
+# Started by hand
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest Ubuntu runner: the library then loads on systems with an older glibc and libstdc++ than the newest runner's
+          - os: ubuntu-22.04
+            configure: -DCMAKE_BUILD_TYPE=Release
+            library: build/src/libPS2ImageMaker.so
+            artifact: PS2ImageMaker-linux-x64
+          - os: windows-latest
+            configure: -A x64
+            library: build/src/Release/PS2ImageMaker.dll
+            artifact: PS2ImageMaker-windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.configure }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload the library
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.library }}
+          if-no-files-found: error
